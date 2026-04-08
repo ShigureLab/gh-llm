@@ -41,7 +41,11 @@ def render_frontmatter(context: TimelineContext) -> list[str]:
         lines.extend(
             [
                 f"timeline_events: {context.total_count}",
-                *([f"timeline_events_unfiltered: {context.timeline_unfiltered_count}"] if context.timeline_filtered else []),
+                *(
+                    [f"timeline_events_unfiltered: {context.timeline_unfiltered_count}"]
+                    if context.timeline_filtered
+                    else []
+                ),
                 *([f"timeline_after: {context.timeline_after}"] if context.timeline_after else []),
                 *([f"timeline_before: {context.timeline_before}"] if context.timeline_before else []),
                 f"page_size: {context.page_size}",
@@ -108,7 +112,9 @@ def render_page(page_number: int, context: TimelineContext, page: TimelinePage) 
         lines.append("(no events on this page)")
         return lines
 
-    for index, item in zip(_page_indexes(page_number=page_number, context=context, page=page), page.items, strict=False):
+    for index, item in zip(
+        _page_indexes(page_number=page_number, context=context, page=page), page.items, strict=False
+    ):
         lines.extend(_render_item(index=index, event=item, context=context, command_group=context.kind))
     return lines
 

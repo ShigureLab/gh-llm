@@ -343,7 +343,11 @@ class TimelinePager:
             collected.extend(_matching_items(current_page, timeline_window))
             if not current_page.page_info.has_previous_page:
                 break
-            if current_page.items and timeline_window.after is not None and current_page.items[0].timestamp <= timeline_window.after:
+            if (
+                current_page.items
+                and timeline_window.after is not None
+                and current_page.items[0].timestamp <= timeline_window.after
+            ):
                 break
 
             before_cursor = current_page.page_info.start_cursor
@@ -427,7 +431,11 @@ class TimelinePager:
 
             if not current_page.page_info.has_next_page:
                 break
-            if current_page.items and timeline_window.before is not None and current_page.items[-1].timestamp >= timeline_window.before:
+            if (
+                current_page.items
+                and timeline_window.before is not None
+                and current_page.items[-1].timestamp >= timeline_window.before
+            ):
                 break
 
             after_cursor = current_page.page_info.end_cursor
@@ -593,7 +601,9 @@ def _matches_window(timestamp: object, timeline_window: TimelineWindow) -> bool:
     return True
 
 
-def _build_local_filtered_pages(*, collected: list[tuple[int, TimelineEvent]], page_size: int) -> dict[int, TimelinePage]:
+def _build_local_filtered_pages(
+    *, collected: list[tuple[int, TimelineEvent]], page_size: int
+) -> dict[int, TimelinePage]:
     total_count = len(collected)
     total_pages = _page_count(total_count, page_size)
     pages: dict[int, TimelinePage] = {}

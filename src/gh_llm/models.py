@@ -317,7 +317,9 @@ class TimelineContext:
             timeline_after=_as_str_optional(value.get("timeline_after")),
             timeline_before=_as_str_optional(value.get("timeline_before")),
             timeline_unfiltered_count=(
-                None if value.get("timeline_unfiltered_count") is None else _as_int(value.get("timeline_unfiltered_count"), 0)
+                None
+                if value.get("timeline_unfiltered_count") is None
+                else _as_int(value.get("timeline_unfiltered_count"), 0)
             ),
             timeline_filtered=bool(value.get("timeline_filtered")),
             labels=tuple(_as_str(item, "") for item in _as_list(value.get("labels")) if item),

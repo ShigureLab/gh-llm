@@ -783,7 +783,9 @@ def test_pr_view_after_filters_incremental_events_and_avoids_forward_bootstrap(
     assert not any("timelineItems(first:" in query for query in timeline_queries)
 
 
-def test_issue_view_before_filters_older_events(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_issue_view_before_filters_older_events(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     responder = GhResponder()
     monkeypatch.setattr(github_api.subprocess, "run", responder.run)
 
