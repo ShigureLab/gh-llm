@@ -35,11 +35,15 @@ def render_frontmatter(context: TimelineContext) -> list[str]:
         f"labels: {json.dumps(list(context.labels), ensure_ascii=False)}",
         f"draft: {str(context.is_draft).lower()}",
         f"updated_at: {context.updated_at}",
+        f"fetched_at: {context.fetched_at}",
     ]
     if context.timeline_loaded:
         lines.extend(
             [
                 f"timeline_events: {context.total_count}",
+                *([f"timeline_events_unfiltered: {context.timeline_unfiltered_count}"] if context.timeline_filtered else []),
+                *([f"timeline_after: {context.timeline_after}"] if context.timeline_after else []),
+                *([f"timeline_before: {context.timeline_before}"] if context.timeline_before else []),
                 f"page_size: {context.page_size}",
                 f"total_pages: {context.total_pages}",
             ]
@@ -104,9 +108,8 @@ def render_page(page_number: int, context: TimelineContext, page: TimelinePage) 
         lines.append("(no events on this page)")
         return lines
 
-    start_index = _page_start_index(page_number=page_number, context=context, page=page)
-    for offset, item in enumerate(page.items):
-        lines.extend(_render_item(index=start_index + offset, event=item, context=context, command_group=context.kind))
+    for index, item in zip(_page_indexes(page_number=page_number, context=context, page=page), page.items, strict=False):
+        lines.extend(_render_item(index=index, event=item, context=context, command_group=context.kind))
     return lines
 
 
@@ -374,6 +377,7 @@ def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list
         return []
     repo = f"{context.owner}/{context.name}"
     selector_name = "issue" if context.kind == "issue" else "pr"
+    filter_flags = _timeline_filter_flags(context)
     hidden_label = (
         f"Hidden timeline page: {hidden_pages[0]}"
         if len(hidden_pages) == 1
@@ -384,7 +388,7 @@ def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list
         hidden_label,
         *[
             _render_template(
-                t"- ⏎ `{display_command_with(f'{context.kind} timeline-expand {page} --{selector_name} {context.number} --repo {repo}')}`"
+                t"- ⏎ `{display_command_with(f'{context.kind} timeline-expand {page} --{selector_name} {context.number} --repo {repo}{filter_flags}')}`"
             )
             for page in hidden_pages
         ],
@@ -456,10 +460,26 @@ def _render_template(template: Template) -> str:
     return "".join(rendered)
 
 
+def _page_indexes(page_number: int, context: TimelineContext, page: TimelinePage) -> tuple[int, ...]:
+    if page.absolute_indexes:
+        return page.absolute_indexes
+    start_index = _page_start_index(page_number=page_number, context=context, page=page)
+    return tuple(range(start_index, start_index + len(page.items)))
+
+
 def _page_start_index(page_number: int, context: TimelineContext, page: TimelinePage) -> int:
     if page_number == context.total_pages and context.total_count % context.page_size != 0:
         return max(1, context.total_count - len(page.items) + 1)
     return (page_number - 1) * context.page_size + 1
+
+
+def _timeline_filter_flags(context: TimelineContext) -> str:
+    parts: list[str] = []
+    if context.timeline_after:
+        parts.extend(["--after", context.timeline_after])
+    if context.timeline_before:
+        parts.extend(["--before", context.timeline_before])
+    return (" " + " ".join(parts)) if parts else ""
 
 
 def render_event_detail(index: int, event: TimelineEvent) -> list[str]:

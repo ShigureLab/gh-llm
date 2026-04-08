@@ -53,6 +53,18 @@ class PullRequestMeta:
 
 
 @dataclass(frozen=True)
+class TimelineWindow:
+    after: datetime | None = None
+    before: datetime | None = None
+    after_text: str | None = None
+    before_text: str | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.after is not None or self.before is not None
+
+
+@dataclass(frozen=True)
 class PageInfo:
     has_next_page: bool
     has_previous_page: bool
@@ -82,6 +94,7 @@ class TimelinePage:
     items: list[TimelineEvent]
     total_count: int
     page_info: PageInfo
+    absolute_indexes: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -194,7 +207,12 @@ class TimelineContext:
     is_draft: bool
     body: str
     updated_at: str
+    fetched_at: str = ""
     timeline_loaded: bool = True
+    timeline_after: str | None = None
+    timeline_before: str | None = None
+    timeline_unfiltered_count: int | None = None
+    timeline_filtered: bool = False
     labels: tuple[str, ...] = ()
     kind: str = "pr"
     pr_reactions_summary: str | None = None
@@ -222,6 +240,7 @@ class TimelineContext:
     conflict_files: tuple[str, ...] = ()
     forward_after_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
     backward_before_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
+    filtered_pages: dict[int, TimelinePage] = field(default_factory=lambda: cast("dict[int, TimelinePage]", {}))
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -238,7 +257,12 @@ class TimelineContext:
             "is_draft": self.is_draft,
             "body": self.body,
             "updated_at": self.updated_at,
+            "fetched_at": self.fetched_at,
             "timeline_loaded": self.timeline_loaded,
+            "timeline_after": self.timeline_after,
+            "timeline_before": self.timeline_before,
+            "timeline_unfiltered_count": self.timeline_unfiltered_count,
+            "timeline_filtered": self.timeline_filtered,
             "labels": list(self.labels),
             "kind": self.kind,
             "pr_reactions_summary": self.pr_reactions_summary,
@@ -284,11 +308,18 @@ class TimelineContext:
             is_draft=bool(value.get("is_draft")),
             body=_as_str(value.get("body"), ""),
             updated_at=_as_str(value.get("updated_at"), ""),
+            fetched_at=_as_str(value.get("fetched_at"), ""),
             timeline_loaded=(
                 _as_int(value.get("total_pages"), 0) > 0
                 if value.get("timeline_loaded") is None
                 else bool(value.get("timeline_loaded"))
             ),
+            timeline_after=_as_str_optional(value.get("timeline_after")),
+            timeline_before=_as_str_optional(value.get("timeline_before")),
+            timeline_unfiltered_count=(
+                None if value.get("timeline_unfiltered_count") is None else _as_int(value.get("timeline_unfiltered_count"), 0)
+            ),
+            timeline_filtered=bool(value.get("timeline_filtered")),
             labels=tuple(_as_str(item, "") for item in _as_list(value.get("labels")) if item),
             kind=_as_str(value.get("kind"), "pr"),
             pr_reactions_summary=_as_str_optional(value.get("pr_reactions_summary")),

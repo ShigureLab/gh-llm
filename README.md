@@ -64,15 +64,19 @@ npx skills add https://github.com/ShigureLab/gh-llm --skill github-conversation
 Read a PR's full timeline — metadata, comments, reviews, checks — with progressive expansion:
 
 ```bash
-# Show first + last timeline pages with actionable hints
+# Initial read: show first + last timeline pages with actionable hints
 gh-llm pr view 77900 --repo PaddlePaddle/Paddle
 gh llm pr view 77900 --repo PaddlePaddle/Paddle
+
+# Later incremental read: reuse the previous frontmatter `fetched_at`
+gh-llm pr view 77900 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
 
 # Show selected regions only
 gh-llm pr view 77900 --repo PaddlePaddle/Paddle --show timeline,checks
 
 # Expand one hidden timeline page
 gh-llm pr timeline-expand 2 --pr 77900 --repo PaddlePaddle/Paddle
+gh-llm pr timeline-expand 2 --pr 77900 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
 
 # Auto-expand folded content in default/timeline view
 gh-llm pr view 77900 --repo PaddlePaddle/Paddle --expand resolved,minimized
@@ -118,11 +122,15 @@ Issue reading works the same way as PR reading — timeline view with progressiv
 
 ```bash
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle
+gh-llm issue view 77924 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
 gh-llm issue timeline-expand 2 --issue 77924 --repo PaddlePaddle/Paddle
+gh-llm issue timeline-expand 2 --issue 77924 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
 gh-llm issue comment-expand IC_xxx --issue 77924 --repo PaddlePaddle/Paddle
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --expand minimized,details
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --show meta,description
 ```
+
+For incremental follow-ups, copy the previous output's `fetched_at` value into `--after <fetched_at>`. `--before` is also available when you want to inspect only older timeline slices.
 
 When `--show` does not include `timeline` (for example `--show meta`, `--show summary`, or `--show actions`), both `pr view` and `issue view` stay on the lightweight metadata path and skip timeline bootstrap.
 
@@ -309,6 +317,8 @@ This supports the normal flow where one review contains multiple inline comments
 All output follows consistent formatting rules so both humans and LLMs can parse it reliably:
 
 - **Metadata** is rendered as YAML-style frontmatter at the top of PR/issue views.
+- Frontmatter includes `fetched_at`, so the next incremental read can use `--after <fetched_at>`.
+- When timeline filtering is active, frontmatter also includes `timeline_after` / `timeline_before` and filtered vs unfiltered event counts.
 - **Description** is wrapped in `<description>...</description>` tags.
 - **Comment bodies** use `<comment>...</comment>` tags to avoid markdown fence ambiguity with code blocks inside comments.
 - **Hidden timeline sections** are separated by `---` dividers and include ready-to-run expand commands to load the omitted content.

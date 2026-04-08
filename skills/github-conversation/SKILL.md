@@ -109,10 +109,14 @@ Use this before forking or opening a PR when you need the default branch, onboar
 
 ```bash
 gh-llm pr view <pr> --repo <owner/repo>
+gh-llm pr view <pr> --repo <owner/repo> --after <previous_fetched_at>
 gh-llm pr timeline-expand <page> --pr <pr> --repo <owner/repo>
+gh-llm pr timeline-expand <page> --pr <pr> --repo <owner/repo> --after <previous_fetched_at>
 gh-llm pr review-expand <PRR_id[,PRR_id...]> --pr <pr> --repo <owner/repo>
 gh-llm pr checks --pr <pr> --repo <owner/repo>
 ```
+
+Use plain `view` for the first pass. On follow-up reads, reuse the previous frontmatter `fetched_at` as `--after <previous_fetched_at>` for an incremental timeline refresh.
 
 ### Prepare a PR body
 
@@ -131,10 +135,13 @@ Use this before `gh pr create` when you need to load a repo PR template, append 
 
 ```bash
 gh-llm issue view <issue> --repo <owner/repo>
+gh-llm issue view <issue> --repo <owner/repo> --after <previous_fetched_at>
 gh-llm issue timeline-expand <page> --issue <issue> --repo <owner/repo>
+gh-llm issue timeline-expand <page> --issue <issue> --repo <owner/repo> --after <previous_fetched_at>
 ```
 
 For lightweight inspection, prefer non-timeline `--show` combinations such as `--show meta`, `--show summary`, or `--show actions`; `gh-llm` keeps those paths on metadata-only loading unless `timeline` is explicitly requested.
+Frontmatter includes `fetched_at`, plus `timeline_after` / `timeline_before` and filtered vs unfiltered counts when timeline filtering is active.
 
 ### Write simple updates
 
