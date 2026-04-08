@@ -405,8 +405,9 @@ def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list
 def _render_item(index: int, event: TimelineEvent, context: TimelineContext, command_group: str) -> list[str]:
     timestamp = event.timestamp.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
     selector_name = "issue" if command_group == "issue" else "pr"
+    filter_flags = _timeline_filter_flags(context)
     details_expand_cmd = display_command_with(
-        f"{command_group} details-expand {index} --{selector_name} {context.number} --repo {context.owner}/{context.name}"
+        f"{command_group} details-expand {index} --{selector_name} {context.number} --repo {context.owner}/{context.name}{filter_flags}"
     )
     details_action = f"⏎ run `{details_expand_cmd}`"
     display_summary = (event.summary or "").replace(

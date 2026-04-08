@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from gh_llm.commands.options import current_timestamp_utc
+from gh_llm.commands.options import current_timestamp_utc, parse_timeline_window
 from gh_llm.models import PageInfo, TimelineContext, TimelinePage, TimelineWindow
 
 if TYPE_CHECKING:
@@ -192,10 +192,17 @@ class TimelinePager:
     ) -> TimelinePage:
         _validate_page(page, context.total_pages)
         if context.timeline_filtered:
-            result = context.filtered_pages.get(page)
-            if result is None:
-                raise RuntimeError(f"filtered timeline page {page} is unavailable")
-            return result
+            return self._fetch_filtered_page(
+                meta,
+                context,
+                page,
+                show_resolved_details=show_resolved_details,
+                show_outdated_details=show_outdated_details,
+                show_minimized_details=show_minimized_details,
+                show_details_blocks=show_details_blocks,
+                review_threads_window=review_threads_window,
+                diff_hunk_lines=diff_hunk_lines,
+            )
 
         from_start = page - 1
         from_end = context.total_pages - page
@@ -222,6 +229,57 @@ class TimelinePager:
             review_threads_window=review_threads_window,
             diff_hunk_lines=diff_hunk_lines,
         )
+
+    def _fetch_filtered_page(
+        self,
+        meta: PullRequestMeta,
+        context: TimelineContext,
+        page: int,
+        *,
+        show_resolved_details: bool,
+        show_outdated_details: bool,
+        show_minimized_details: bool,
+        show_details_blocks: bool,
+        review_threads_window: int | None,
+        diff_hunk_lines: int | None,
+    ) -> TimelinePage:
+        timeline_window = parse_timeline_window(after=context.timeline_after, before=context.timeline_before)
+        if not timeline_window.active:
+            result = context.filtered_pages.get(page)
+            if result is None:
+                raise RuntimeError(f"filtered timeline page {page} is unavailable")
+            return result
+
+        if timeline_window.after is not None:
+            collected, _ = self._collect_filtered_from_end(
+                meta,
+                page_size=context.page_size,
+                timeline_window=timeline_window,
+                show_resolved_details=show_resolved_details,
+                show_outdated_details=show_outdated_details,
+                show_minimized_details=show_minimized_details,
+                show_details_blocks=show_details_blocks,
+                review_threads_window=review_threads_window,
+                diff_hunk_lines=diff_hunk_lines,
+            )
+        else:
+            collected, _ = self._collect_filtered_from_start(
+                meta,
+                page_size=context.page_size,
+                timeline_window=timeline_window,
+                show_resolved_details=show_resolved_details,
+                show_outdated_details=show_outdated_details,
+                show_minimized_details=show_minimized_details,
+                show_details_blocks=show_details_blocks,
+                review_threads_window=review_threads_window,
+                diff_hunk_lines=diff_hunk_lines,
+            )
+
+        filtered_pages = _build_local_filtered_pages(collected=collected, page_size=context.page_size)
+        result = filtered_pages.get(page)
+        if result is None:
+            raise RuntimeError(f"filtered timeline page {page} is unavailable")
+        return result
 
     def _build_filtered_initial(
         self,

@@ -92,6 +92,7 @@ def register_issue_parser(subparsers: Any) -> None:
     details_expand_parser.add_argument("--issue", help="Issue number/url")
     details_expand_parser.add_argument("--repo", help="repository in OWNER/REPO format")
     details_expand_parser.add_argument("--page-size", type=int, help="timeline entries per page")
+    add_timeline_window_arguments(details_expand_parser)
     details_expand_parser.set_defaults(handler=cmd_issue_details_expand)
 
     comment_edit_parser = issue_subparsers.add_parser("comment-edit", help="edit one issue comment by node id")
@@ -200,8 +201,14 @@ def cmd_issue_view(args: Any) -> int:
 def cmd_issue_timeline_expand(args: Any) -> int:
     client = GitHubClient()
     pager = TimelinePager(client)
-    context, meta = _resolve_context_and_meta(client=client, pager=pager, args=args)
     expand = _parse_expand_options(raw_values=list(getattr(args, "expand", [])))
+    context, meta = _resolve_context_and_meta(
+        client=client,
+        pager=pager,
+        args=args,
+        show_minimized_details=expand.minimized,
+        show_details_blocks=expand.details,
+    )
 
     page = pager.fetch_page(
         meta=meta,
@@ -223,13 +230,19 @@ def cmd_issue_timeline_expand(args: Any) -> int:
 def cmd_issue_details_expand(args: Any) -> int:
     client = GitHubClient()
     pager = TimelinePager(client)
-    context, meta = _resolve_context_and_meta(client=client, pager=pager, args=args)
+    context, meta = _resolve_context_and_meta(
+        client=client,
+        pager=pager,
+        args=args,
+        show_minimized_details=True,
+        show_details_blocks=True,
+    )
 
     index = int(args.index)
-    if index < 1 or index > context.total_count:
+    page_number = _resolve_timeline_page_for_index(context=context, index=index)
+    if page_number is None:
         raise RuntimeError(f"invalid event index {index}, expected in 1..{context.total_count}")
 
-    page_number = ((index - 1) // context.page_size) + 1
     page = pager.fetch_page(
         meta=meta,
         context=context,
@@ -290,7 +303,12 @@ def _resolve_optional_issue(*, client: GitHubClient, args: Any) -> PullRequestMe
 
 
 def _resolve_context_and_meta(
-    *, client: GitHubClient, pager: TimelinePager, args: Any
+    *,
+    client: GitHubClient,
+    pager: TimelinePager,
+    args: Any,
+    show_minimized_details: bool = False,
+    show_details_blocks: bool = False,
 ) -> tuple[TimelineContext, PullRequestMeta]:
     page_size = getattr(args, "page_size", None)
     effective_page_size = DEFAULT_PAGE_SIZE if page_size is None else int(page_size)
@@ -299,12 +317,25 @@ def _resolve_context_and_meta(
         meta=meta,
         page_size=effective_page_size,
         timeline_window=_resolve_timeline_window(args),
+        show_minimized_details=show_minimized_details,
+        show_details_blocks=show_details_blocks,
     )
     return context, meta
 
 
 def _resolve_timeline_window(args: Any):
     return parse_timeline_window(after=getattr(args, "after", None), before=getattr(args, "before", None))
+
+
+def _resolve_timeline_page_for_index(*, context: TimelineContext, index: int) -> int | None:
+    if context.timeline_filtered:
+        for page_number, page in context.filtered_pages.items():
+            if index in page.absolute_indexes:
+                return page_number
+        return None
+    if index < 1 or index > context.total_count:
+        return None
+    return ((index - 1) // context.page_size) + 1
 
 
 def _parse_expand_options(*, raw_values: list[str]) -> _ExpandOptions:
