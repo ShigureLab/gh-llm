@@ -407,8 +407,7 @@ class TimelinePager:
                 break
             if (
                 meta.kind != "pr"
-                and
-                current_page.items
+                and current_page.items
                 and timeline_window.after is not None
                 and current_page.items[0].timestamp <= timeline_window.after
             ):
@@ -499,8 +498,7 @@ class TimelinePager:
                 break
             if (
                 meta.kind != "pr"
-                and
-                current_page.items
+                and current_page.items
                 and timeline_window.before is not None
                 and current_page.items[-1].timestamp >= timeline_window.before
             ):

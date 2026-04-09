@@ -2839,7 +2839,12 @@ def _build_review_text(
         comment_nodes = _as_list(thread.get("comments"))
         matching_comment_count = _count_thread_comments_in_timeline_window(comment_nodes, timeline_window)
         thread_matches_window = matching_comment_count > 0
-        if timeline_window is not None and timeline_window.active and not review_in_window and not thread_matches_window:
+        if (
+            timeline_window is not None
+            and timeline_window.active
+            and not review_in_window
+            and not thread_matches_window
+        ):
             continue
         total_count += len(comment_nodes)
         if is_resolved and not show_resolved_details and not thread_matches_window:
