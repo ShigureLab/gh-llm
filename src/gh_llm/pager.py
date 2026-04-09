@@ -660,6 +660,10 @@ def _matching_items(page: TimelinePage, timeline_window: TimelineWindow) -> list
 def _event_matches_window(event: TimelineEvent, timeline_window: TimelineWindow) -> bool:
     if _matches_window(event.timestamp, timeline_window):
         return True
+    if timeline_window.after is None:
+        return False
+    if event.timestamp > timeline_window.after:
+        return False
     return any(_matches_window(timestamp, timeline_window) for timestamp in event.related_timestamps)
 
 

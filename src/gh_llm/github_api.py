@@ -2942,7 +2942,7 @@ def _render_review_thread_block(
     header = f"- Thread[{thread_index}] {thread_id}"
     if force_full_context and timeline_window is not None and timeline_window.active:
         noun = "update" if matching_comment_count == 1 else "updates"
-        header += f" ({matching_comment_count} {noun} in selected window; full context shown)"
+        header += f" ({matching_comment_count} {noun} in selected window; thread kept for context)"
     lines = [header]
     visible_comments = 0
     minimized_hidden_count = 0
@@ -2953,7 +2953,7 @@ def _render_review_thread_block(
         comment = _as_dict(raw_comment, context="review comment")
         comment_id = _as_optional_str(comment.get("id")) or "(unknown comment id)"
         is_minimized = bool(comment.get("isMinimized"))
-        if is_minimized and not show_minimized_details and not force_full_context:
+        if is_minimized and not show_minimized_details:
             minimized_hidden_count += 1
             reasons: list[str] = []
             reason = _format_minimized_reason(comment.get("minimizedReason"))

@@ -918,7 +918,278 @@ def test_pr_view_after_keeps_full_thread_context_for_window_matched_review_updat
     assert "reply inside window" in out
     assert "[before selected window]" in out
     assert "[within selected window]" in out
-    assert "Thread[1] PRRT_spanning (1 update in selected window; full context shown)" in out
+    assert "Thread[1] PRRT_spanning (1 update in selected window; thread kept for context)" in out
+
+
+def test_pr_view_before_does_not_include_later_review_via_older_thread_history(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def before_window_events() -> list[dict[str, Any]]:
+        return [
+            {
+                "__typename": "IssueComment",
+                "id": "c_before",
+                "url": "https://example.com/c-before",
+                "createdAt": "2026-02-14T14:20:00Z",
+                "body": "older standalone comment",
+                "author": {"login": "alice"},
+                "reactionGroups": [],
+            },
+            {
+                "__typename": "PullRequestReview",
+                "id": "PRR_before_old",
+                "submittedAt": "2026-02-14T14:40:00Z",
+                "state": "COMMENTED",
+                "body": "older review body",
+                "isMinimized": False,
+                "minimizedReason": None,
+                "author": {"login": "reviewer"},
+            },
+            {
+                "__typename": "PullRequestReview",
+                "id": "PRR_before_late",
+                "submittedAt": "2026-02-14T15:10:00Z",
+                "state": "COMMENTED",
+                "body": "late review body",
+                "isMinimized": False,
+                "minimizedReason": None,
+                "author": {"login": "late-reviewer"},
+            },
+            {
+                "__typename": "IssueComment",
+                "id": "c_after",
+                "url": "https://example.com/c-after",
+                "createdAt": "2026-02-14T15:20:00Z",
+                "body": "late standalone comment",
+                "author": {"login": "bob"},
+                "reactionGroups": [],
+            },
+        ]
+
+    def before_window_thread_payload(after: str | None) -> dict[str, Any]:
+        if after is not None:
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            }
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "PRRT_before_window",
+                                    "isResolved": False,
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "id": "rc_before_old",
+                                                "path": "python/test_file.py",
+                                                "body": "older thread root",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T14:40:01Z",
+                                                "outdated": False,
+                                                "isMinimized": False,
+                                                "minimizedReason": None,
+                                                "author": {"login": "reviewer"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_before_old"},
+                                            },
+                                            {
+                                                "id": "rc_before_late",
+                                                "path": "python/test_file.py",
+                                                "body": "late thread reply",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T15:10:01Z",
+                                                "outdated": False,
+                                                "isMinimized": False,
+                                                "minimizedReason": None,
+                                                "author": {"login": "late-reviewer"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_before_late"},
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+    monkeypatch.setattr(sys.modules[__name__], "_events", before_window_events)
+    monkeypatch.setattr(sys.modules[__name__], "_review_threads_payload", before_window_thread_payload)
+
+    code = cli.run(
+        [
+            "pr",
+            "view",
+            "77928",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "2",
+            "--before",
+            "2026-02-14T15:00:00Z",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "timeline_before: 2026-02-14T15:00:00Z" in out
+    assert "timeline_events: 2" in out
+    assert "older review body" in out
+    assert "late review body" not in out
+    assert "[2026-02-14 15:10 UTC] review/commented by @late-reviewer" not in out
+    assert "late standalone comment" not in out
+
+
+def test_pr_view_after_keeps_minimized_comments_collapsed_in_context_threads(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def minimized_thread_events() -> list[dict[str, Any]]:
+        return [
+            {
+                "__typename": "PullRequestReview",
+                "id": "PRR_minimized_old",
+                "submittedAt": "2026-02-14T14:40:00Z",
+                "state": "COMMENTED",
+                "body": "older review body",
+                "isMinimized": False,
+                "minimizedReason": None,
+                "author": {"login": "reviewer"},
+            },
+            {
+                "__typename": "IssueComment",
+                "id": "c_visible",
+                "url": "https://example.com/c-visible",
+                "createdAt": "2026-02-14T15:10:00Z",
+                "body": "fresh standalone comment",
+                "author": {"login": "ShigureNyako"},
+                "reactionGroups": [],
+            },
+        ]
+
+    def minimized_thread_payload(after: str | None) -> dict[str, Any]:
+        if after is not None:
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            }
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "PRRT_minimized_context",
+                                    "isResolved": False,
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "id": "rc_hidden_context",
+                                                "path": "python/test_file.py",
+                                                "body": "hidden minimized root",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T14:40:01Z",
+                                                "outdated": False,
+                                                "isMinimized": True,
+                                                "minimizedReason": "OUTDATED",
+                                                "author": {"login": "reviewer"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_minimized_old"},
+                                            },
+                                            {
+                                                "id": "rc_visible_context",
+                                                "path": "python/test_file.py",
+                                                "body": "visible in-window reply",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T15:00:02Z",
+                                                "outdated": False,
+                                                "isMinimized": False,
+                                                "minimizedReason": None,
+                                                "author": {"login": "ShigureNyako"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_minimized_followup"},
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+    monkeypatch.setattr(sys.modules[__name__], "_events", minimized_thread_events)
+    monkeypatch.setattr(sys.modules[__name__], "_review_threads_payload", minimized_thread_payload)
+
+    code = cli.run(
+        [
+            "pr",
+            "view",
+            "77928",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "1",
+            "--show",
+            "timeline",
+            "--after",
+            "2026-02-14T14:55:00Z",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "Thread[1] PRRT_minimized_context (1 update in selected window; thread kept for context)" in out
+    assert "(hidden comment: outdated)" in out
+    assert "hidden minimized root" not in out
+    assert "visible in-window reply" in out
 
 
 def test_issue_view_before_filters_older_events(
