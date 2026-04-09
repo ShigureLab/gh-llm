@@ -80,6 +80,7 @@ class TimelineEvent:
     summary: str
     source_id: str
     full_text: str | None = None
+    related_timestamps: tuple[datetime, ...] = ()
     is_truncated: bool = False
     resolved_hidden_count: int = 0
     minimized_hidden_count: int = 0

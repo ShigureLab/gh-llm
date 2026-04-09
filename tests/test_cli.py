@@ -783,6 +783,144 @@ def test_pr_view_after_filters_incremental_events_and_avoids_forward_bootstrap(
     assert not any("timelineItems(first:" in query for query in timeline_queries)
 
 
+def test_pr_view_after_keeps_full_thread_context_for_window_matched_review_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def thread_spanning_events() -> list[dict[str, Any]]:
+        return [
+            {
+                "__typename": "PullRequestReview",
+                "id": "PRR_old",
+                "submittedAt": "2026-02-14T14:40:00Z",
+                "state": "CHANGES_REQUESTED",
+                "body": "older review body",
+                "isMinimized": False,
+                "minimizedReason": None,
+                "author": {"login": "reviewer"},
+            },
+            {
+                "__typename": "IssueComment",
+                "id": "c_old",
+                "url": "https://example.com/c-old",
+                "createdAt": "2026-02-14T14:54:00Z",
+                "body": "older unrelated comment",
+                "author": {"login": "someone"},
+                "reactionGroups": [],
+            },
+            {
+                "__typename": "IssueComment",
+                "id": "c_new",
+                "url": "https://example.com/c-new",
+                "createdAt": "2026-02-14T15:10:00Z",
+                "body": "fresh comment",
+                "author": {"login": "ShigureNyako"},
+                "reactionGroups": [],
+            },
+        ]
+
+    def spanning_thread_payload(after: str | None) -> dict[str, Any]:
+        if after is not None:
+            return {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            }
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "PRRT_spanning",
+                                    "isResolved": False,
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "id": "rc_old",
+                                                "path": "python/test_file.py",
+                                                "body": "root review comment",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T14:40:01Z",
+                                                "outdated": False,
+                                                "isMinimized": False,
+                                                "minimizedReason": None,
+                                                "author": {"login": "reviewer"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_old"},
+                                            },
+                                            {
+                                                "id": "rc_new",
+                                                "path": "python/test_file.py",
+                                                "body": "reply inside window",
+                                                "line": 21,
+                                                "originalLine": 21,
+                                                "startLine": None,
+                                                "originalStartLine": None,
+                                                "diffHunk": "@@ -20,1 +20,1 @@\n-old_name\n+new_name",
+                                                "createdAt": "2026-02-14T15:00:02Z",
+                                                "outdated": False,
+                                                "isMinimized": False,
+                                                "minimizedReason": None,
+                                                "author": {"login": "ShigureNyako"},
+                                                "reactionGroups": [],
+                                                "pullRequestReview": {"id": "PRR_followup"},
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+    monkeypatch.setattr(sys.modules[__name__], "_events", thread_spanning_events)
+    monkeypatch.setattr(sys.modules[__name__], "_review_threads_payload", spanning_thread_payload)
+
+    code = cli.run(
+        [
+            "pr",
+            "view",
+            "77928",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "1",
+            "--show",
+            "timeline",
+            "--after",
+            "2026-02-14T14:55:00Z",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "[2026-02-14 14:40 UTC] review/changes_requested by @reviewer" in out
+    assert "older unrelated comment" not in out
+    assert "root review comment" in out
+    assert "reply inside window" in out
+    assert "[before selected window]" in out
+    assert "[within selected window]" in out
+    assert "Thread[1] PRRT_spanning (1 update in selected window; full context shown)" in out
+
+
 def test_issue_view_before_filters_older_events(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

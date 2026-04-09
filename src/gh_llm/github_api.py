@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from fnmatch import fnmatchcase
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
 from gh_llm.diagnostics import GhCommandError
@@ -30,6 +30,9 @@ from gh_llm.models import (
     TimelineEvent,
     TimelinePage,
 )
+
+if TYPE_CHECKING:
+    from gh_llm.models import TimelineWindow
 
 MAX_INLINE_TEXT = 8000
 MAX_INLINE_LINES = 200
@@ -1111,6 +1114,7 @@ query($owner:String!,$name:String!,$after:String){
         page_size: int,
         after: str | None,
         *,
+        timeline_window: TimelineWindow | None = None,
         show_resolved_details: bool = False,
         show_outdated_details: bool = False,
         show_minimized_details: bool = False,
@@ -1138,6 +1142,7 @@ query($owner:String!,$name:String!,$after:String){
             connection,
             ref=ref,
             threads_by_review=threads_by_review,
+            timeline_window=timeline_window,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -1154,6 +1159,7 @@ query($owner:String!,$name:String!,$after:String){
         page_size: int,
         before: str | None,
         *,
+        timeline_window: TimelineWindow | None = None,
         show_resolved_details: bool = False,
         show_outdated_details: bool = False,
         show_minimized_details: bool = False,
@@ -1181,6 +1187,7 @@ query($owner:String!,$name:String!,$after:String){
             connection,
             ref=ref,
             threads_by_review=threads_by_review,
+            timeline_window=timeline_window,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -1206,21 +1213,21 @@ query($owner:String!,$name:String!,$after:String){
                 _as_dict(comment, context="reviewThread comment") for comment in _as_list(thread.get("comments"))
             ]
 
-            comments_by_review: dict[str, list[dict[str, object]]] = {}
+            review_ids: set[str] = set()
             for comment in comments:
                 review_obj = _as_dict_optional(comment.get("pullRequestReview"))
                 review_id = _as_optional_str(review_obj.get("id")) if review_obj is not None else None
                 if review_id:
-                    comments_by_review.setdefault(review_id, []).append(comment)
+                    review_ids.add(review_id)
 
-            if not comments_by_review:
+            if not review_ids:
                 continue
 
-            for review_id, review_comments in comments_by_review.items():
+            for review_id in sorted(review_ids):
                 thread_payload: dict[str, object] = {
                     "id": thread_id,
                     "isResolved": is_resolved,
-                    "comments": review_comments,
+                    "comments": comments,
                 }
                 by_review.setdefault(review_id, []).append(thread_payload)
 
@@ -2268,6 +2275,7 @@ def _parse_timeline_page(
     *,
     ref: PullRequestRef,
     threads_by_review: dict[str, list[dict[str, object]]],
+    timeline_window: TimelineWindow | None,
     show_resolved_details: bool,
     show_outdated_details: bool,
     show_minimized_details: bool,
@@ -2292,6 +2300,7 @@ def _parse_timeline_page(
             _as_dict(node, context="timeline node"),
             ref=ref,
             threads_for_review=threads_by_review,
+            timeline_window=timeline_window,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -2313,6 +2322,7 @@ def _parse_node(
     *,
     ref: PullRequestRef,
     threads_for_review: dict[str, list[dict[str, object]]],
+    timeline_window: TimelineWindow | None,
     show_resolved_details: bool,
     show_outdated_details: bool,
     show_minimized_details: bool,
@@ -2373,6 +2383,7 @@ def _parse_node(
             ref=ref,
             state=state,
             threads_for_review=threads_for_review.get(review_id, []),
+            timeline_window=timeline_window,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -2398,6 +2409,7 @@ def _parse_node(
             summary=summary,
             source_id=review_id,
             full_text=full_review,
+            related_timestamps=_collect_review_comment_timestamps(threads_for_review.get(review_id, [])),
             is_truncated=has_clipped_diff_hunk,
             resolved_hidden_count=resolved_hidden_count,
             minimized_hidden_count=minimized_hidden_count,
@@ -2794,6 +2806,7 @@ def _build_review_text(
     state: str,
     *,
     threads_for_review: list[dict[str, object]],
+    timeline_window: TimelineWindow | None,
     show_resolved_details: bool,
     show_outdated_details: bool,
     show_minimized_details: bool,
@@ -2807,9 +2820,11 @@ def _build_review_text(
     if not show_details_blocks:
         body, body_details_count = _collapse_details_blocks(body)
         details_collapsed_count += body_details_count
-    total_count = sum(
-        len(_as_list(_as_dict(thread, context="thread").get("comments"))) for thread in threads_for_review
+    review_in_window = _timestamp_matches_timeline_window(
+        _parse_datetime(_as_optional_str(node.get("submittedAt"))),
+        timeline_window,
     )
+    total_count = 0
     detail_lines: list[str] = []
     thread_blocks: list[list[str]] = []
     thread_visible_counts: list[int] = []
@@ -2822,7 +2837,12 @@ def _build_review_text(
         is_resolved = bool(thread.get("isResolved"))
         thread_id = _as_optional_str(thread.get("id")) or "(unknown thread id)"
         comment_nodes = _as_list(thread.get("comments"))
-        if is_resolved and not show_resolved_details:
+        matching_comment_count = _count_thread_comments_in_timeline_window(comment_nodes, timeline_window)
+        thread_matches_window = matching_comment_count > 0
+        if timeline_window is not None and timeline_window.active and not review_in_window and not thread_matches_window:
+            continue
+        total_count += len(comment_nodes)
+        if is_resolved and not show_resolved_details and not thread_matches_window:
             resolved_hidden_count += len(comment_nodes)
             continue
         rendered_thread_index += 1
@@ -2838,6 +2858,9 @@ def _build_review_text(
                 show_minimized_details=show_minimized_details,
                 show_details_blocks=show_details_blocks,
                 diff_hunk_lines=diff_hunk_lines,
+                timeline_window=timeline_window,
+                force_full_context=thread_matches_window,
+                matching_comment_count=matching_comment_count,
             )
         )
         thread_blocks.append(thread_lines)
@@ -2907,8 +2930,15 @@ def _render_review_thread_block(
     show_minimized_details: bool,
     show_details_blocks: bool,
     diff_hunk_lines: int | None,
+    timeline_window: TimelineWindow | None = None,
+    force_full_context: bool = False,
+    matching_comment_count: int = 0,
 ) -> tuple[list[str], int, bool, int]:
-    lines = [f"- Thread[{thread_index}] {thread_id}"]
+    header = f"- Thread[{thread_index}] {thread_id}"
+    if force_full_context and timeline_window is not None and timeline_window.active:
+        noun = "update" if matching_comment_count == 1 else "updates"
+        header += f" ({matching_comment_count} {noun} in selected window; full context shown)"
+    lines = [header]
     visible_comments = 0
     minimized_hidden_count = 0
     minimized_reasons: set[str] = set()
@@ -2918,7 +2948,7 @@ def _render_review_thread_block(
         comment = _as_dict(raw_comment, context="review comment")
         comment_id = _as_optional_str(comment.get("id")) or "(unknown comment id)"
         is_minimized = bool(comment.get("isMinimized"))
-        if is_minimized and not show_minimized_details:
+        if is_minimized and not show_minimized_details and not force_full_context:
             minimized_hidden_count += 1
             reasons: list[str] = []
             reason = _format_minimized_reason(comment.get("minimizedReason"))
@@ -2940,6 +2970,7 @@ def _render_review_thread_block(
             viewer_login=viewer_login,
             show_details_blocks=show_details_blocks,
             diff_hunk_lines=diff_hunk_lines,
+            timeline_window=timeline_window,
         )
         lines.extend(comment_lines)
         visible_comments += 1
@@ -3001,6 +3032,63 @@ def _flatten_thread_blocks(blocks: list[list[str]]) -> list[str]:
     return merged
 
 
+def _collect_review_comment_timestamps(threads_for_review: list[dict[str, object]]) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    for raw_thread in threads_for_review:
+        thread = _as_dict(raw_thread, context="review thread timestamps")
+        timestamps.extend(_collect_thread_comment_timestamps(_as_list(thread.get("comments"))))
+    return tuple(timestamps)
+
+
+def _collect_thread_comment_timestamps(comments: list[object]) -> list[datetime]:
+    timestamps: list[datetime] = []
+    for raw_comment in comments:
+        comment = _as_dict(raw_comment, context="review comment timestamp")
+        created_at = _as_optional_str(comment.get("createdAt"))
+        if created_at is None:
+            continue
+        timestamps.append(_parse_datetime(created_at))
+    return timestamps
+
+
+def _count_thread_comments_in_timeline_window(
+    comments: list[object],
+    timeline_window: TimelineWindow | None,
+) -> int:
+    if timeline_window is None or not timeline_window.active:
+        return 0
+    return sum(
+        1
+        for timestamp in _collect_thread_comment_timestamps(comments)
+        if _timestamp_matches_timeline_window(timestamp, timeline_window)
+    )
+
+
+def _timestamp_matches_timeline_window(timestamp: datetime, timeline_window: TimelineWindow | None) -> bool:
+    if timeline_window is None or not timeline_window.active:
+        return False
+    if timeline_window.after is not None and timestamp <= timeline_window.after:
+        return False
+    if timeline_window.before is not None and timestamp >= timeline_window.before:
+        return False
+    return True
+
+
+def _format_timeline_window_comment_marker(
+    timestamp: datetime | None,
+    timeline_window: TimelineWindow | None,
+) -> str:
+    if timestamp is None or timeline_window is None or not timeline_window.active:
+        return ""
+    if _timestamp_matches_timeline_window(timestamp, timeline_window):
+        return " [within selected window]"
+    if timeline_window.after is not None and timestamp <= timeline_window.after:
+        return " [before selected window]"
+    if timeline_window.before is not None and timestamp >= timeline_window.before:
+        return " [after selected window]"
+    return ""
+
+
 def _format_minimized_reason(value: object) -> str:
     raw = (_as_optional_str(value) or "unknown").strip()
     if not raw:
@@ -3017,11 +3105,14 @@ def _render_review_comment_block(
     viewer_login: str,
     show_details_blocks: bool,
     diff_hunk_lines: int | None,
+    timeline_window: TimelineWindow | None = None,
 ) -> tuple[list[str], bool, int]:
     path = _as_optional_str(comment.get("path")) or "(unknown path)"
     line = _as_line_ref(comment)
     author = _get_actor_display(comment.get("author"))
-    created_at = _as_optional_str(comment.get("createdAt")) or "unknown time"
+    created_at_raw = _as_optional_str(comment.get("createdAt"))
+    created_at = created_at_raw or "unknown time"
+    created_at_value = _parse_datetime(created_at_raw) if created_at_raw is not None else None
     body = (_as_optional_str(comment.get("body")) or "").strip()
     diff_hunk = (_as_optional_str(comment.get("diffHunk")) or "").strip()
     suggestion_lines = _extract_suggestion_lines(body)
@@ -3033,7 +3124,8 @@ def _render_review_comment_block(
         rendered_body, details_collapsed_count = _collapse_details_blocks(rendered_body)
 
     outdated_badge = " [outdated]" if (bool(comment.get("outdated")) or bool(comment.get("isOutdated"))) else ""
-    lines = [f"- [{index}]{outdated_badge} {path}{line} by @{author} at {created_at}"]
+    window_marker = _format_timeline_window_comment_marker(created_at_value, timeline_window)
+    lines = [f"- [{index}]{outdated_badge} {path}{line} by @{author} at {created_at}{window_marker}"]
     if rendered_body:
         lines.append("  Comment:")
         lines.extend(_indented_tag_block("comment", rendered_body, indent="  "))

@@ -122,6 +122,7 @@ class TimelinePager:
             meta.ref,
             page_size=page_size,
             after=None,
+            timeline_window=None,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -159,6 +160,7 @@ class TimelinePager:
             meta.ref,
             page_size=last_page_size,
             before=None,
+            timeline_window=None,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -356,6 +358,7 @@ class TimelinePager:
             meta.ref,
             page_size=1,
             before=None,
+            timeline_window=timeline_window,
             show_resolved_details=show_resolved_details,
             show_outdated_details=show_outdated_details,
             show_minimized_details=show_minimized_details,
@@ -380,6 +383,7 @@ class TimelinePager:
                 meta.ref,
                 page_size=last_page_size,
                 before=None,
+                timeline_window=timeline_window,
                 show_resolved_details=show_resolved_details,
                 show_outdated_details=show_outdated_details,
                 show_minimized_details=show_minimized_details,
@@ -402,6 +406,8 @@ class TimelinePager:
             if not current_page.page_info.has_previous_page:
                 break
             if (
+                meta.kind != "pr"
+                and
                 current_page.items
                 and timeline_window.after is not None
                 and current_page.items[0].timestamp <= timeline_window.after
@@ -421,6 +427,7 @@ class TimelinePager:
                     default_size=page_size,
                 ),
                 before=before_cursor,
+                timeline_window=timeline_window,
                 show_resolved_details=show_resolved_details,
                 show_outdated_details=show_outdated_details,
                 show_minimized_details=show_minimized_details,
@@ -464,6 +471,7 @@ class TimelinePager:
                 meta.ref,
                 page_size=page_size,
                 after=after_cursor,
+                timeline_window=timeline_window,
                 show_resolved_details=show_resolved_details,
                 show_outdated_details=show_outdated_details,
                 show_minimized_details=show_minimized_details,
@@ -490,6 +498,8 @@ class TimelinePager:
             if not current_page.page_info.has_next_page:
                 break
             if (
+                meta.kind != "pr"
+                and
                 current_page.items
                 and timeline_window.before is not None
                 and current_page.items[-1].timestamp >= timeline_window.before
@@ -526,6 +536,7 @@ class TimelinePager:
                 meta.ref,
                 page_size=context.page_size,
                 after=cursor,
+                timeline_window=None,
                 show_resolved_details=show_resolved_details,
                 show_outdated_details=show_outdated_details,
                 show_minimized_details=show_minimized_details,
@@ -577,6 +588,7 @@ class TimelinePager:
                 meta.ref,
                 page_size=current_page_size,
                 before=cursor,
+                timeline_window=None,
                 show_resolved_details=show_resolved_details,
                 show_outdated_details=show_outdated_details,
                 show_minimized_details=show_minimized_details,
@@ -643,8 +655,14 @@ def _matching_items(page: TimelinePage, timeline_window: TimelineWindow) -> list
     return [
         (absolute_index, event)
         for absolute_index, event in zip(page.absolute_indexes, page.items, strict=False)
-        if _matches_window(event.timestamp, timeline_window)
+        if _event_matches_window(event, timeline_window)
     ]
+
+
+def _event_matches_window(event: TimelineEvent, timeline_window: TimelineWindow) -> bool:
+    if _matches_window(event.timestamp, timeline_window):
+        return True
+    return any(_matches_window(timestamp, timeline_window) for timestamp in event.related_timestamps)
 
 
 def _matches_window(timestamp: object, timeline_window: TimelineWindow) -> bool:
