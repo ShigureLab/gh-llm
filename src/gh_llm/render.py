@@ -159,11 +159,15 @@ def render_pr_actions(context: TimelineContext, *, include_diff: bool = True, in
 
         lines.extend(
             [
+                "⌨ comment_body: '<comment_body>'",
                 f"⏎ Comment via gh: `gh pr comment {context.number} --repo {repo} --body '<comment_body>'`",
                 *close_or_reopen_lines,
+                "⌨ labels_csv: '<label1>,<label2>'",
                 f"⏎ Add labels via gh: `gh pr edit {context.number} --repo {repo} --add-label '<label1>,<label2>'`",
                 f"⏎ Remove labels via gh: `gh pr edit {context.number} --repo {repo} --remove-label '<label1>,<label2>'`",
+                "⌨ reviewers_csv: '<reviewer1>,<reviewer2>'",
                 f"⏎ Request review via gh: `gh pr edit {context.number} --repo {repo} --add-reviewer '<reviewer1>,<reviewer2>'`",
+                "⌨ assignees_csv: '<assignee1>,<assignee2>'",
                 f"⏎ Assign via gh: `gh pr edit {context.number} --repo {repo} --add-assignee '<assignee1>,<assignee2>'`",
                 *branch_lines,
             ]
@@ -180,10 +184,13 @@ def render_issue_actions(context: TimelineContext) -> list[str]:
         close_or_reopen_lines.append(f"⏎ Reopen issue via gh: `gh issue reopen {context.number} --repo {repo}`")
     return [
         "## Actions",
+        "⌨ comment_body: '<comment_body>'",
         f"⏎ Comment via gh: `gh issue comment {context.number} --repo {repo} --body '<comment_body>'`",
         *close_or_reopen_lines,
+        "⌨ labels_csv: '<label1>,<label2>'",
         f"⏎ Add labels via gh: `gh issue edit {context.number} --repo {repo} --add-label '<label1>,<label2>'`",
         f"⏎ Remove labels via gh: `gh issue edit {context.number} --repo {repo} --remove-label '<label1>,<label2>'`",
+        "⌨ assignees_csv: '<assignee1>,<assignee2>'",
         f"⏎ Assign via gh: `gh issue edit {context.number} --repo {repo} --add-assignee '<assignee1>,<assignee2>'`",
     ]
 
