@@ -29,8 +29,9 @@ GitHub stores the body text exactly as sent.
 1. Do not write multi-paragraph bodies as literal escape sequences such as `\n` or `\n\n`.
 2. If you send `--body 'line1\n\nline2'`, GitHub may store the backslashes literally, and the rendered review/comment will show `\n\n`.
 3. Use `--body` only for short single-paragraph text.
-4. For quotes, bullets, code fences, or multiple paragraphs, prefer `--body-file` with a file or `-` on standard input.
-5. For review suggestions that span multiple lines, prefer `--suggestion-file`.
+4. In the command patterns documented by this skill, every write action that accepts `--body` also has a `--body-file` form.
+5. For quotes, bullets, code fences, or multiple paragraphs, prefer `--body-file` with a file or `-` on standard input.
+6. For review suggestions that span multiple lines, prefer `--suggestion-file`.
 
 Safe patterns:
 

@@ -2990,12 +2990,7 @@ def _render_review_thread_block(
     resolve_cmd = display_command_with(f"pr thread-resolve {thread_id} --pr {ref.number} --repo {ref.owner}/{ref.name}")
     lines.append(f"  ◌ thread_id: {thread_id}")
     lines.append("  ⌨ reply_body: '<reply>'")
-    lines.append("  ⌨ reply_body_file: '<reply.md>'")
     lines.append(f"  ⏎ Reply via {display_command()}: `{reply_cmd}`")
-    lines.append(
-        "  ⏎ Multi-line reply via "
-        + f"{display_command()}: `{display_command_with(f'pr thread-reply {thread_id} --body-file <reply.md> --pr {ref.number} --repo {ref.owner}/{ref.name}')}`"
-    )
     if is_resolved:
         lines.append(f"  ⏎ Unresolve via {display_command()}: `{unresolve_cmd}`")
     else:
@@ -3161,14 +3156,9 @@ def _render_review_comment_block(
         edit_cmd = display_command_with(
             f"pr comment-edit {comment_id} --body '<comment_body>' --pr {ref.number} --repo {ref.owner}/{ref.name}"
         )
-        edit_file_cmd = display_command_with(
-            f"pr comment-edit {comment_id} --body-file <comment.md> --pr {ref.number} --repo {ref.owner}/{ref.name}"
-        )
         lines.append(f"  ◌ comment_id: {comment_id}")
         lines.append("  ⌨ comment_body: '<comment_body>'")
-        lines.append("  ⌨ comment_body_file: '<comment.md>'")
         lines.append(f"  ⏎ Edit comment via {display_command()}: `{edit_cmd}`")
-        lines.append(f"  ⏎ Multi-line edit via {display_command()}: `{edit_file_cmd}`")
 
     if not body and not diff_hunk:
         lines.append("  (empty review comment)")
