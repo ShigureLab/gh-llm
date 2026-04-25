@@ -327,7 +327,7 @@ All output follows consistent formatting rules so both humans and LLMs can parse
 
 ```bash
 uv run ruff check
-uv run pyright
+uv run ty check --error-on-warning src/gh_llm tests
 uv run pytest -q
 ```
 
