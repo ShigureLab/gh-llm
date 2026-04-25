@@ -1576,7 +1576,7 @@ def test_extract_diff_hunks_prefers_first_added_line_for_right_side() -> None:
         ]
     )
 
-    hunks = pr_commands._extract_diff_hunks(diff)  # pyright: ignore[reportPrivateUsage]
+    hunks = pr_commands._extract_diff_hunks(diff)
 
     assert len(hunks) == 1
     assert hunks[0].path == "paddle/phi/kernels/funcs/abs.h"
@@ -1602,7 +1602,7 @@ def test_extract_diff_hunks_uses_real_new_file_line_numbers_on_right_side() -> N
         ]
     )
 
-    hunks = pr_commands._extract_diff_hunks(diff)  # pyright: ignore[reportPrivateUsage]
+    hunks = pr_commands._extract_diff_hunks(diff)
 
     assert len(hunks) == 1
     assert hunks[0].path == "src/gh_llm/commands/pr.py"
@@ -1612,7 +1612,7 @@ def test_extract_diff_hunks_uses_real_new_file_line_numbers_on_right_side() -> N
 
 
 def test_render_numbered_hunk_lines_preserves_real_right_side_line_numbers() -> None:
-    hunk = pr_commands._DiffHunk(  # pyright: ignore[reportPrivateUsage]
+    hunk = pr_commands._DiffHunk(
         path="src/gh_llm/commands/pr.py",
         header="@@ -890,6 +890,7 @@ def _extract_diff_hunks(diff: str) -> list[_DiffHunk]:",
         anchor_line=893,
@@ -1631,7 +1631,7 @@ def test_render_numbered_hunk_lines_preserves_real_right_side_line_numbers() -> 
         match_paths={"src/gh_llm/commands/pr.py"},
     )
 
-    rendered = pr_commands._render_numbered_hunk_lines(hunk)  # pyright: ignore[reportPrivateUsage]
+    rendered = pr_commands._render_numbered_hunk_lines(hunk)
 
     assert "L 890 R 890 |      current_hunk_lines: list[str] = []" in rendered
     assert "L 891 R 891 |      current_old_line = 0" in rendered
@@ -1640,7 +1640,7 @@ def test_render_numbered_hunk_lines_preserves_real_right_side_line_numbers() -> 
 
 
 def test_inline_review_thread_blocks_do_not_fallback_from_current_right_anchor_to_original_left_line() -> None:
-    current_hunk = pr_commands._DiffHunk(  # pyright: ignore[reportPrivateUsage]
+    current_hunk = pr_commands._DiffHunk(
         path="paddle/phi/api/include/compat/ATen/ops/from_blob.h",
         header="@@ -18,3 +80,4 @@",
         anchor_line=81,
@@ -1654,7 +1654,7 @@ def test_inline_review_thread_blocks_do_not_fallback_from_current_right_anchor_t
         right_commentable_lines={80, 81, 82},
         match_paths={"paddle/phi/api/include/compat/ATen/ops/from_blob.h"},
     )
-    stale_hunk = pr_commands._DiffHunk(  # pyright: ignore[reportPrivateUsage]
+    stale_hunk = pr_commands._DiffHunk(
         path="paddle/phi/api/include/compat/ATen/ops/from_blob.h",
         header="@@ -80,4 +210,1 @@",
         anchor_line=210,
@@ -1684,7 +1684,7 @@ def test_inline_review_thread_blocks_do_not_fallback_from_current_right_anchor_t
         comments=(),
     )
 
-    blocks_by_hunk = pr_commands._build_inline_review_thread_blocks_for_file(  # pyright: ignore[reportPrivateUsage]
+    blocks_by_hunk = pr_commands._build_inline_review_thread_blocks_for_file(
         hunks=[current_hunk, stale_hunk],
         summaries=[summary],
         extra_contexts=[None, None],
@@ -2897,7 +2897,7 @@ def test_pr_body_template_finds_docs_template_directory(
 
 def test_decode_repository_contents_text_returns_none_for_invalid_base64() -> None:
     payload: dict[str, object] = {"encoding": "base64", "content": "A"}
-    assert github_api._decode_repository_contents_text(payload) is None  # pyright: ignore[reportPrivateUsage]
+    assert github_api._decode_repository_contents_text(payload) is None
 
 
 def test_pr_body_template_surfaces_non_404_lookup_failures(

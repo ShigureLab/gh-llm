@@ -79,7 +79,7 @@ def build_pull_request_body_scaffold(
 
     existing_titles = {normalize_section_title(title) for title in extract_markdown_section_titles(cleaned_template)}
     added_sections: list[str] = []
-    blocks = [cleaned_template]
+    blocks: list[str] = [cleaned_template]
 
     for section in required_sections:
         normalized = normalize_section_title(section)
