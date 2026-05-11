@@ -2752,7 +2752,7 @@ def _decode_repository_contents_text(payload: dict[str, object]) -> str | None:
     normalized = content.replace("\n", "")
     try:
         return base64.b64decode(normalized, validate=False).decode("utf-8", errors="replace")
-    except (binascii.Error, ValueError):
+    except binascii.Error, ValueError:
         return None
 
 

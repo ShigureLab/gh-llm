@@ -1144,7 +1144,7 @@ def cmd_pr_review_submit(args: Any) -> int:
     review_id, review_state = client.submit_pull_request_review(
         ref=meta.ref,
         event=str(args.event),
-        body=body if body else None,
+        body=body or None,
     )
     print(f"review: {review_id}")
     if review_state:

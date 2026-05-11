@@ -30,9 +30,9 @@ gh-llm = "gh_llm.__main__:main"
 
 [dependency-groups]
 dev = [
-  "ty>=0.0.32",
-  "ruff>=0.14.10",
-  "pytest>=9.0.2",
+  "ty>=0.0.35",
+  "ruff>=0.15.12",
+  "pytest>=9.0.3",
   "pytest-rerunfailures>=16.1",
 ]
 
