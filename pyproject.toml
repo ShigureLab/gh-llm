@@ -1,6 +1,6 @@
 [project]
 name = "gh-llm"
-version = "0.1.15"
+version = "0.1.16"
 description = "🤖 CLI tooling for LLM-first GitHub reading and review workflows."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -29,12 +29,7 @@ Issues = "https://github.com/ShigureLab/gh-llm/issues"
 gh-llm = "gh_llm.__main__:main"
 
 [dependency-groups]
-dev = [
-  "ty>=0.0.37",
-  "ruff>=0.15.13",
-  "pytest>=9.0.3",
-  "pytest-rerunfailures>=16.2",
-]
+dev = ["ty>=0.0.37", "ruff>=0.15.13", "pytest>=9.0.3", "pytest-rerunfailures>=16.2"]
 
 [tool.ruff]
 line-length = 120
