@@ -13,7 +13,7 @@ from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
-from gh_llm.diagnostics import GhCommandError
+from gh_llm.diagnostics import GhCommandError, looks_like_transport_error
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.models import (
     CheckItem,
@@ -37,9 +37,10 @@ if TYPE_CHECKING:
 MAX_INLINE_TEXT = 8000
 MAX_INLINE_LINES = 200
 DEFAULT_REVIEW_DIFF_HUNK_LINES = 12
-GRAPHQL_MAX_ATTEMPTS = 4
+GRAPHQL_MAX_ATTEMPTS = 6
+GRAPHQL_MUTATION_MAX_ATTEMPTS = 4
 GRAPHQL_BACKOFF_BASE_SECONDS = 0.25
-GRAPHQL_BACKOFF_MAX_SECONDS = 2.0
+GRAPHQL_BACKOFF_MAX_SECONDS = 4.0
 DETAILS_BLOCK_RE = re.compile(r"(?is)<details\b[^>]*>(.*?)</details>")
 SUMMARY_RE = re.compile(r"(?is)<summary\b[^>]*>(.*?)</summary>")
 HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
@@ -1528,7 +1529,12 @@ mutation($id:ID!,$body:String!){
         return updated_id or None
 
     def _get_viewer_login(self) -> str:
-        payload = _run_command_json(["gh", "api", "user"])
+        payload = _run_command_json(
+            ["gh", "api", "user"],
+            max_attempts=GRAPHQL_MAX_ATTEMPTS,
+            backoff_base_seconds=GRAPHQL_BACKOFF_BASE_SECONDS,
+            backoff_max_seconds=GRAPHQL_BACKOFF_MAX_SECONDS,
+        )
         login = _as_optional_str(payload.get("login"))
         return login or ""
 
@@ -2160,7 +2166,7 @@ def _run_graphql_payload(query: str, variables: dict[str, str | int]) -> dict[st
         cmd.extend(["-F", f"{key}={value}"])
     return _run_command_json(
         cmd,
-        max_attempts=GRAPHQL_MAX_ATTEMPTS,
+        max_attempts=_graphql_query_max_attempts(query),
         backoff_base_seconds=GRAPHQL_BACKOFF_BASE_SECONDS,
         backoff_max_seconds=GRAPHQL_BACKOFF_MAX_SECONDS,
     )
@@ -2175,10 +2181,16 @@ def _run_graphql_payload_any(query: str, variables: dict[str, object]) -> dict[s
             cmd.extend(["-F", f"{key}={value}"])
     return _run_command_json(
         cmd,
-        max_attempts=GRAPHQL_MAX_ATTEMPTS,
+        max_attempts=_graphql_query_max_attempts(query),
         backoff_base_seconds=GRAPHQL_BACKOFF_BASE_SECONDS,
         backoff_max_seconds=GRAPHQL_BACKOFF_MAX_SECONDS,
     )
+
+
+def _graphql_query_max_attempts(query: str) -> int:
+    if query.lstrip().startswith("mutation"):
+        return GRAPHQL_MUTATION_MAX_ATTEMPTS
+    return GRAPHQL_MAX_ATTEMPTS
 
 
 def _run_command_json(
@@ -2199,7 +2211,8 @@ def _run_command_json(
             return {str(k): v for k, v in raw.items()}
 
         stderr = result.stderr.strip()
-        if attempt >= attempts or not _is_retryable_gh_error(stderr):
+        error_output = _combine_command_error_output(result.stderr, result.stdout)
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -2228,7 +2241,8 @@ def _run_command_json_any(
             return json.loads(result.stdout)
 
         stderr = result.stderr.strip()
-        if attempt >= attempts or not _is_retryable_gh_error(stderr):
+        error_output = _combine_command_error_output(result.stderr, result.stdout)
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -2256,7 +2270,8 @@ def _run_command_text(
         if result.returncode == 0:
             return result.stdout
         stderr = result.stderr.strip()
-        if attempt >= attempts or not _is_retryable_gh_error(stderr):
+        error_output = _combine_command_error_output(result.stderr, result.stdout)
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -3656,18 +3671,8 @@ def _reaction_emoji(content: str) -> str:
     return mapping.get(content, "")
 
 
-def _is_retryable_gh_error(stderr: str) -> bool:
-    lowered = stderr.lower()
-    retryable_patterns = (
-        'post "https://api.github.com/graphql": eof',
-        "eof",
-        "timeout",
-        "tls handshake timeout",
-        "connection reset",
-        "connection refused",
-        "temporary failure",
-    )
-    return any(pattern in lowered for pattern in retryable_patterns)
+def _combine_command_error_output(stderr: str, stdout: str) -> str:
+    return "\n".join(part.strip() for part in (stderr, stdout) if part.strip())
 
 
 def _is_check_run_passed(*, status: str, conclusion: str | None) -> bool:

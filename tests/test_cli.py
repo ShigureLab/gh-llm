@@ -522,6 +522,40 @@ def test_doctor_scopes_auth_status_to_target_host(
     assert ["gh", "auth", "status"] not in calls
 
 
+def test_doctor_warns_when_auth_status_fails_but_api_probes_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    entrypoint_version = __version__
+
+    def fake_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        del check, capture_output, text
+        if cmd == ["gh", "llm", "--version"]:
+            return FakeCompletedProcess(f"{entrypoint_version}\n")
+        if cmd == ["gh", "--version"]:
+            return FakeCompletedProcess("gh version test-build\n")
+        if cmd == ["gh", "auth", "status", "--active", "--hostname", "github.com"]:
+            return FakeCompletedProcess("", returncode=1, stderr="token is invalid")
+        if cmd == ["gh", "api", "user"]:
+            return FakeCompletedProcess(json.dumps({"login": "ShigureNyako"}))
+        if cmd[:3] == ["gh", "api", "graphql"]:
+            return FakeCompletedProcess(json.dumps({"data": {"viewer": {"login": "ShigureNyako"}}}))
+        return FakeCompletedProcess("", returncode=1, stderr="unexpected command")
+
+    monkeypatch.setattr(doctor_commands.subprocess, "run", fake_run)
+    monkeypatch.setenv("GH_LLM_DISPLAY_CMD", "gh llm")
+    monkeypatch.setattr(sys, "argv", ["gh-llm"])
+
+    code = cli.run(["doctor"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "- auth status (`gh auth status --active --hostname github.com`): warning (API probes ok)" in out
+    assert "token is invalid" in out
+    assert "API probes succeeded; treating auth status as a warning." in out
+    assert "status: ok" in out
+    assert "failed_checks:" not in out
+
+
 def test_parse_event_indexes_batch() -> None:
     assert cli.parse_event_indexes(["5,11", "8-6"]) == [5, 6, 7, 8, 11]
 
@@ -2664,6 +2698,86 @@ def test_graphql_eof_retries_with_backoff(
     assert state["failed_once"] is True
 
 
+def test_graphql_stream_error_retries_with_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    state = {"failed_once": False}
+
+    def flaky_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        if cmd[:3] == ["gh", "api", "graphql"] and not state["failed_once"]:
+            state["failed_once"] = True
+            return FakeCompletedProcess("", returncode=1, stderr="stream error: stream ID 1; INTERNAL_ERROR")
+        return responder.run(cmd, check=check, capture_output=capture_output, text=text)
+
+    def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(github_api.subprocess, "run", flaky_run)
+    monkeypatch.setattr(github_api.time, "sleep", no_sleep)
+
+    code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "### Page 1/4" in out
+    assert state["failed_once"] is True
+
+
+def test_rest_viewer_login_eof_retries_with_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    state = {"failed_once": False}
+
+    def flaky_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        if cmd == ["gh", "api", "user"] and not state["failed_once"]:
+            state["failed_once"] = True
+            return FakeCompletedProcess("", returncode=1, stderr='Get "https://api.github.com/user": EOF')
+        return responder.run(cmd, check=check, capture_output=capture_output, text=text)
+
+    def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(github_api.subprocess, "run", flaky_run)
+    monkeypatch.setattr(github_api.time, "sleep", no_sleep)
+
+    code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "### Page 1/4" in out
+    assert state["failed_once"] is True
+
+
+def test_graphql_mutation_transport_failure_uses_mutation_retry_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"attempts": 0}
+
+    def failing_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        del check, capture_output, text
+        if cmd[:3] == ["gh", "api", "graphql"]:
+            state["attempts"] += 1
+            return FakeCompletedProcess("", returncode=1, stderr='Post "https://api.github.com/graphql": EOF')
+        return FakeCompletedProcess("", returncode=1, stderr="unexpected command")
+
+    def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(github_api.subprocess, "run", failing_run)
+    monkeypatch.setattr(github_api.time, "sleep", no_sleep)
+
+    try:
+        github_api.GitHubClient().resolve_review_thread("PRRT_retry_cap")
+    except RuntimeError as error:
+        assert 'Post "https://api.github.com/graphql": EOF' in str(error)
+    else:
+        raise AssertionError("expected mutation transport failure")
+
+    assert state["attempts"] == github_api.GRAPHQL_MUTATION_MAX_ATTEMPTS
+
+
 def test_graphql_eof_failure_prints_layered_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2685,24 +2799,24 @@ def test_graphql_eof_failure_prints_layered_diagnostics(
     code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
     assert code == 1
     err = capsys.readouterr().err
-    assert "error: GitHub GraphQL request failed after 4 attempts." in err
+    assert "error: GitHub GraphQL request failed after 6 attempts." in err
     assert 'Last error: Post "https://api.github.com/graphql": EOF' in err
     assert "Category: GraphQL transport / network" in err
     assert "Command: gh api graphql" in err
     assert "Try next:" in err
-    assert "- gh auth status --active --hostname github.com" in err
     assert "- gh api user" in err
     assert "- gh api graphql -f query='query{viewer{login}}'" in err
     assert "- gh llm doctor" in err
+    assert "gh auth status" not in err
 
 
-def test_graphql_error_hints_scope_auth_status_to_target_host(
+def test_graphql_error_hints_prefer_api_probes_over_auth_status(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def failing_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
         del check, capture_output, text
-        if cmd[:3] == ["gh", "api", "graphql"]:
+        if cmd[:3] in (["gh", "api", "graphql"], ["gh", "pr", "view"]):
             return FakeCompletedProcess("", returncode=1, stderr='Post "https://api.github.com/graphql": EOF')
         return FakeCompletedProcess("", returncode=1, stderr="unexpected command")
 
@@ -2717,8 +2831,10 @@ def test_graphql_error_hints_scope_auth_status_to_target_host(
     code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
     assert code == 1
     err = capsys.readouterr().err
-    assert "- gh auth status --active --hostname github.example.com" in err
+    assert "- gh api user" in err
+    assert "- gh api graphql -f query='query{viewer{login}}'" in err
     assert "- gh llm doctor" in err
+    assert "gh auth status" not in err
 
 
 def test_pr_view_graphql_transport_error_uses_layered_diagnostics(
@@ -2743,9 +2859,9 @@ def test_pr_view_graphql_transport_error_uses_layered_diagnostics(
 
     code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
     assert code == 1
-    assert state["attempts"] == 4
+    assert state["attempts"] == 6
     err = capsys.readouterr().err
-    assert "error: GitHub GraphQL request failed after 4 attempts." in err
+    assert "error: GitHub GraphQL request failed after 6 attempts." in err
     assert "Category: GraphQL transport / network" in err
     assert "Command: gh pr view" in err
     assert "- gh llm doctor" in err
@@ -2773,9 +2889,9 @@ def test_issue_view_graphql_transport_error_uses_layered_diagnostics(
 
     code = cli.run(["issue", "view", "77924", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
     assert code == 1
-    assert state["attempts"] == 4
+    assert state["attempts"] == 6
     err = capsys.readouterr().err
-    assert "error: GitHub GraphQL request failed after 4 attempts." in err
+    assert "error: GitHub GraphQL request failed after 6 attempts." in err
     assert "Category: GraphQL transport / network" in err
     assert "Command: gh issue view" in err
     assert "- gh llm doctor" in err

@@ -19,6 +19,38 @@ _GRAPHQL_BACKED_COMMANDS = {
     ("gh", "pr", "view"),
     ("gh", "issue", "view"),
 }
+TRANSPORT_ERROR_PATTERNS = (
+    'post "https://api.github.com/graphql": eof',
+    "eof",
+    "timeout",
+    "i/o timeout",
+    "context deadline exceeded",
+    "client.timeout exceeded",
+    "request canceled",
+    "tls handshake timeout",
+    "remote error: tls",
+    "connection reset",
+    "connection reset by peer",
+    "connection refused",
+    "connection closed",
+    "connection aborted",
+    "broken pipe",
+    "temporary failure",
+    "temporarily unavailable",
+    "network is unreachable",
+    "server misbehaving",
+    "stream error",
+    "goaway",
+    "proxyconnect",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "500 internal server error",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+)
 
 
 class GhCommandError(RuntimeError):
@@ -82,6 +114,11 @@ def format_command_error(error: GhCommandError) -> list[str]:
     return lines
 
 
+def looks_like_transport_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(pattern in lowered for pattern in TRANSPORT_ERROR_PATTERNS)
+
+
 def _diagnose_command_error(error: GhCommandError) -> _Diagnosis:
     lowered = str(error).lower()
     if _looks_like_rate_limit_error(lowered):
@@ -105,17 +142,17 @@ def _diagnose_command_error(error: GhCommandError) -> _Diagnosis:
             ),
         )
 
-    if _is_graphql_backed_command(error.cmd) and _looks_like_transport_error(lowered):
+    if _is_graphql_backed_command(error.cmd) and looks_like_transport_error(lowered):
         attempt_suffix = _format_attempt_suffix(error)
         return _Diagnosis(
             headline=f"GitHub GraphQL request failed{attempt_suffix}.",
             category="GraphQL transport / network",
             explanation=(
                 "The request appears to have failed while GitHub GraphQL data was being fetched. "
-                "This usually points to transient network, proxy, TLS, or GitHub-side transport issues."
+                "This usually points to transient network, proxy, TLS, or GitHub-side transport issues. "
+                "The direct REST and GraphQL probes are the useful source of truth here."
             ),
             next_commands=(
-                _auth_status_command(),
                 _REST_PROBE_COMMAND,
                 _GRAPHQL_PROBE_COMMAND,
                 display_command_with("doctor"),
@@ -150,21 +187,6 @@ def _auth_status_command() -> str:
 
 def _is_graphql_backed_command(cmd: Sequence[str]) -> bool:
     return tuple(str(part) for part in cmd[:3]) in _GRAPHQL_BACKED_COMMANDS
-
-
-def _looks_like_transport_error(lowered: str) -> bool:
-    patterns = (
-        'post "https://api.github.com/graphql": eof',
-        "eof",
-        "timeout",
-        "tls handshake timeout",
-        "connection reset",
-        "connection refused",
-        "temporary failure",
-        "network is unreachable",
-        "server misbehaving",
-    )
-    return any(pattern in lowered for pattern in patterns)
 
 
 def _looks_like_auth_error(lowered: str) -> bool:
