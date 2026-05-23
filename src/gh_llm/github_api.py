@@ -13,7 +13,7 @@ from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
-from gh_llm.diagnostics import GhCommandError
+from gh_llm.diagnostics import GhCommandError, looks_like_transport_error
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.models import (
     CheckItem,
@@ -30,7 +30,6 @@ from gh_llm.models import (
     TimelineEvent,
     TimelinePage,
 )
-from gh_llm.transport_errors import looks_like_transport_error
 
 if TYPE_CHECKING:
     from gh_llm.models import TimelineWindow
