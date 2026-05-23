@@ -43,6 +43,32 @@ def add_timeline_window_arguments(parser: Any) -> None:
     )
 
 
+def add_auto_collapse_author_argument(parser: Any) -> None:
+    parser.add_argument(
+        "--auto-collapse-author",
+        action="append",
+        default=[],
+        metavar="LOGIN",
+        help="auto-collapse timeline comments/reviews from GitHub login(s), comma-separated or repeatable",
+    )
+
+
+def parse_auto_collapse_authors(*, raw_values: list[str]) -> tuple[str, ...]:
+    authors: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        for part in raw.split(","):
+            token = part.strip().lstrip("@").strip()
+            if not token:
+                continue
+            normalized = token.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            authors.append(token)
+    return tuple(authors)
+
+
 def parse_timeline_window(*, after: str | None, before: str | None) -> TimelineWindow:
     after_value = _parse_timestamp(raw=after, flag="--after")
     before_value = _parse_timestamp(raw=before, flag="--before")

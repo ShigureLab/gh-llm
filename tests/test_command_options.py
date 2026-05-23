@@ -52,6 +52,14 @@ def test_maybe_resolve_subject_skips_resolution_without_selector() -> None:
     assert called is False
 
 
+def test_parse_auto_collapse_authors_accepts_commas_repeats_and_at_prefixes() -> None:
+    resolved = command_options.parse_auto_collapse_authors(
+        raw_values=["PaddlePaddle-bot,@other", "@paddlepaddle-BOT", "  third  "]
+    )
+
+    assert resolved == ("PaddlePaddle-bot", "other", "third")
+
+
 def test_resolve_file_or_inline_text_treats_empty_file_path_as_provided(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

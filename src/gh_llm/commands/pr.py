@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gh_llm.commands.options import (
+    add_auto_collapse_author_argument,
     add_body_input_arguments,
     add_timeline_window_arguments,
     maybe_resolve_subject,
+    parse_auto_collapse_authors,
     parse_timeline_window,
     raise_unknown_option_value,
     resolve_file_or_inline_text,
@@ -99,6 +101,7 @@ def register_pr_parser(subparsers: Any) -> None:
         help="max lines for each review diff hunk (<=0 means full)",
     )
     add_timeline_window_arguments(view_parser)
+    add_auto_collapse_author_argument(view_parser)
     view_parser.set_defaults(handler=cmd_pr_view)
 
     timeline_expand_parser = pr_subparsers.add_parser("timeline-expand", help="expand a specific timeline page")
@@ -119,6 +122,7 @@ def register_pr_parser(subparsers: Any) -> None:
         help="max lines for each review diff hunk (<=0 means full)",
     )
     add_timeline_window_arguments(timeline_expand_parser)
+    add_auto_collapse_author_argument(timeline_expand_parser)
     timeline_expand_parser.set_defaults(handler=cmd_pr_timeline_expand)
 
     details_expand_parser = pr_subparsers.add_parser(
@@ -382,11 +386,16 @@ def cmd_pr_view(args: Any) -> int:
     expand = _parse_expand_options(raw_values=list(getattr(args, "expand", [])))
     show = _parse_show_options(raw_values=list(getattr(args, "show", [])))
     timeline_window = _resolve_timeline_window(args)
+    auto_collapse_authors = _resolve_auto_collapse_authors(args)
     client = GitHubClient()
     pager = TimelinePager(client)
 
     meta = _resolve_pr_meta(client=client, args=args)
-    context = build_context_from_meta(meta=meta, page_size=page_size)
+    context = build_context_from_meta(
+        meta=meta,
+        page_size=page_size,
+        auto_collapse_authors=auto_collapse_authors,
+    )
     first_page: TimelinePage | None = None
     last_page: TimelinePage | None = None
     shown_pages: set[int] = set()
@@ -401,6 +410,7 @@ def cmd_pr_view(args: Any) -> int:
             show_minimized_details=expand.minimized,
             show_details_blocks=expand.details,
             diff_hunk_lines=diff_hunk_lines,
+            auto_collapse_authors=auto_collapse_authors,
         )
         shown_pages.add(1)
 
@@ -501,6 +511,7 @@ def cmd_pr_timeline_expand(args: Any) -> int:
         show_minimized_details=expand.minimized,
         show_details_blocks=expand.details,
         diff_hunk_lines=diff_hunk_lines,
+        auto_collapse_authors=_resolve_auto_collapse_authors(args),
     )
 
     page = pager.fetch_page(
@@ -1163,6 +1174,7 @@ def _resolve_context_and_meta(
     show_minimized_details: bool = False,
     show_details_blocks: bool = False,
     diff_hunk_lines: int | None = DEFAULT_DIFF_HUNK_LINES,
+    auto_collapse_authors: tuple[str, ...] = (),
 ) -> tuple[TimelineContext, PullRequestMeta]:
     page_size = getattr(args, "page_size", None)
     effective_page_size = DEFAULT_PAGE_SIZE if page_size is None else int(page_size)
@@ -1176,12 +1188,17 @@ def _resolve_context_and_meta(
         show_minimized_details=show_minimized_details,
         show_details_blocks=show_details_blocks,
         diff_hunk_lines=diff_hunk_lines,
+        auto_collapse_authors=auto_collapse_authors,
     )
     return context, meta
 
 
 def _resolve_timeline_window(args: Any):
     return parse_timeline_window(after=getattr(args, "after", None), before=getattr(args, "before", None))
+
+
+def _resolve_auto_collapse_authors(args: Any) -> tuple[str, ...]:
+    return parse_auto_collapse_authors(raw_values=list(getattr(args, "auto_collapse_author", [])))
 
 
 def _resolve_timeline_page_for_index(*, context: TimelineContext, index: int) -> int | None:

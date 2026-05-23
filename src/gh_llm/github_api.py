@@ -2335,6 +2335,8 @@ def _parse_node(
     typename = str(node.get("__typename") or "")
     if typename == "IssueComment":
         body = _as_optional_str(node.get("body"))
+        author = node.get("author")
+        actor_login = _get_login(author)
         details_collapsed_count = 0
         display_body = body
         if not show_details_blocks:
@@ -2349,34 +2351,38 @@ def _parse_node(
         return TimelineEvent(
             timestamp=_parse_datetime(_as_optional_str(node.get("createdAt"))),
             kind="comment",
-            actor=_get_actor_display(node.get("author")),
+            actor=_get_actor_display(author),
             summary=summary,
             source_id=_as_optional_str(node.get("id")) or "comment",
+            actor_login=actor_login,
             full_text=display_body,
             is_truncated=is_truncated,
-            editable_comment_id=(
-                _as_optional_str(node.get("id")) if _get_login(node.get("author")) == viewer_login else None
-            ),
+            editable_comment_id=(_as_optional_str(node.get("id")) if actor_login == viewer_login else None),
             reactions_summary=_format_reactions(node.get("reactionGroups")),
             details_collapsed_count=details_collapsed_count,
+            auto_collapse_kind="comment",
         )
 
     if typename == "PullRequestReview":
         state = _as_optional_str(node.get("state")) or "COMMENTED"
         review_id = _as_optional_str(node.get("id")) or "review"
+        author = node.get("author")
+        actor_login = _get_login(author)
         is_minimized = bool(node.get("isMinimized"))
         minimized_reason = _format_minimized_reason(node.get("minimizedReason"))
         if is_minimized and not show_minimized_details:
             return TimelineEvent(
                 timestamp=_parse_datetime(_as_optional_str(node.get("submittedAt"))),
                 kind=f"review/{state.lower()}",
-                actor=_get_actor_display(node.get("author")),
+                actor=_get_actor_display(author),
                 summary=f"(review hidden: {minimized_reason})",
                 source_id=review_id,
+                actor_login=actor_login,
                 full_text=_as_optional_str(node.get("body")),
                 is_truncated=True,
                 minimized_hidden_count=1,
                 minimized_hidden_reasons=minimized_reason,
+                auto_collapse_kind="review",
             )
         full_review, resolved_hidden_count, has_clipped_diff_hunk, details_collapsed_count = _build_review_text(
             node=node,
@@ -2405,9 +2411,10 @@ def _parse_node(
         return TimelineEvent(
             timestamp=_parse_datetime(_as_optional_str(node.get("submittedAt"))),
             kind=f"review/{state.lower()}",
-            actor=_get_actor_display(node.get("author")),
+            actor=_get_actor_display(author),
             summary=summary,
             source_id=review_id,
+            actor_login=actor_login,
             full_text=full_review,
             related_timestamps=_collect_review_comment_timestamps(threads_for_review.get(review_id, [])),
             is_truncated=has_clipped_diff_hunk,
@@ -2415,6 +2422,7 @@ def _parse_node(
             minimized_hidden_count=minimized_hidden_count,
             minimized_hidden_reasons=minimized_hidden_reasons,
             details_collapsed_count=details_collapsed_count,
+            auto_collapse_kind="review",
         )
 
     if typename == "ReviewDismissedEvent":
