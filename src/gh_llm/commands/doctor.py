@@ -64,12 +64,22 @@ def cmd_doctor(_: Any) -> int:
     entrypoint = display_command()
     argv0 = detect_prog_name(sys.argv[0])
     target_host = resolve_target_host()
+    entrypoint_probe = _probe_entrypoint_version(entrypoint)
+    gh_version_probe = _probe_gh_version()
+    auth_status_probe = _probe_auth_status(target_host)
+    rest_user_probe = _probe_rest_user()
+    graphql_viewer_probe = _probe_graphql_viewer()
+    auth_status_probe = _reconcile_auth_status_probe(
+        auth_status_probe,
+        rest_user_probe=rest_user_probe,
+        graphql_viewer_probe=graphql_viewer_probe,
+    )
     critical_probes = (
-        _probe_entrypoint_version(entrypoint),
-        _probe_gh_version(),
-        _probe_auth_status(target_host),
-        _probe_rest_user(),
-        _probe_graphql_viewer(),
+        entrypoint_probe,
+        gh_version_probe,
+        auth_status_probe,
+        rest_user_probe,
+        graphql_viewer_probe,
     )
     failed = [probe.name for probe in critical_probes if not probe.ok and probe.critical]
 
@@ -176,6 +186,30 @@ def _probe_auth_status(target_host: str) -> _ProbeResult:
         ok=result.ok,
         summary=summary,
         detail=result.output,
+    )
+
+
+def _reconcile_auth_status_probe(
+    auth_status_probe: _ProbeResult,
+    *,
+    rest_user_probe: _ProbeResult,
+    graphql_viewer_probe: _ProbeResult,
+) -> _ProbeResult:
+    if auth_status_probe.ok or not (rest_user_probe.ok and graphql_viewer_probe.ok):
+        return auth_status_probe
+
+    detail_parts = [
+        part
+        for part in (auth_status_probe.detail.strip(), "API probes succeeded; treating auth status as a warning.")
+        if part
+    ]
+    return _ProbeResult(
+        name=auth_status_probe.name,
+        command=auth_status_probe.command,
+        ok=True,
+        summary="warning (API probes ok)",
+        detail="\n\n".join(detail_parts),
+        critical=False,
     )
 
 

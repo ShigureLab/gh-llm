@@ -186,9 +186,11 @@ gh llm doctor
 
 `doctor` prints the current entrypoint, resolved executable paths, `gh` / `gh-llm` versions,
 active-host `gh auth status`, a REST probe, a minimal GraphQL probe, and proxy-related environment variables.
+If `gh auth status` is noisy but both API probes succeed, `doctor` reports that auth check as a warning instead
+of failing the whole diagnosis.
 
 When `gh-llm` hits transport errors such as GraphQL `EOF` / timeout failures, the CLI now reports the
-retry count and suggests concrete follow-up commands such as `gh auth status`,
+retry count and suggests concrete follow-up probes such as `gh api user`,
 `gh api graphql -f query='query{viewer{login}}'`, and `gh-llm doctor`.
 
 ## PR Review Workflow
