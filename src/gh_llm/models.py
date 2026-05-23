@@ -79,6 +79,7 @@ class TimelineEvent:
     actor: str
     summary: str
     source_id: str
+    actor_login: str | None = None
     full_text: str | None = None
     related_timestamps: tuple[datetime, ...] = ()
     is_truncated: bool = False
@@ -88,6 +89,7 @@ class TimelineEvent:
     editable_comment_id: str | None = None
     reactions_summary: str | None = None
     details_collapsed_count: int = 0
+    auto_collapse_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +216,7 @@ class TimelineContext:
     timeline_before: str | None = None
     timeline_unfiltered_count: int | None = None
     timeline_filtered: bool = False
+    auto_collapse_authors: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
     kind: str = "pr"
     pr_reactions_summary: str | None = None
@@ -264,6 +267,7 @@ class TimelineContext:
             "timeline_before": self.timeline_before,
             "timeline_unfiltered_count": self.timeline_unfiltered_count,
             "timeline_filtered": self.timeline_filtered,
+            "auto_collapse_authors": list(self.auto_collapse_authors),
             "labels": list(self.labels),
             "kind": self.kind,
             "pr_reactions_summary": self.pr_reactions_summary,
@@ -323,6 +327,9 @@ class TimelineContext:
                 else _as_int(value.get("timeline_unfiltered_count"), 0)
             ),
             timeline_filtered=bool(value.get("timeline_filtered")),
+            auto_collapse_authors=tuple(
+                _as_str(item, "").lstrip("@") for item in _as_list(value.get("auto_collapse_authors")) if item
+            ),
             labels=tuple(_as_str(item, "") for item in _as_list(value.get("labels")) if item),
             kind=_as_str(value.get("kind"), "pr"),
             pr_reactions_summary=_as_str_optional(value.get("pr_reactions_summary")),

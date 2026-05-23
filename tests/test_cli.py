@@ -737,6 +737,100 @@ def test_view_and_expand_use_real_cursor_pagination(
     assert "END_MARKER" in out
 
 
+def test_pr_view_without_auto_collapse_keeps_default_timeline_output(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+
+    code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "auto_collapse_authors:" not in out
+    assert "auto-collapsed" not in out
+    assert "LONG_TEXT" in out
+    assert "END_MARKER" in out
+
+
+def test_pr_view_auto_collapse_author_collapses_selected_comments_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+
+    code = cli.run(
+        [
+            "pr",
+            "view",
+            "77928",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "2",
+            "--auto-collapse-author",
+            "@BOT",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert 'auto_collapse_authors: ["BOT"]' in out
+    assert "[2026-02-14 14:31 UTC] comment by @bot" in out
+    assert "(auto-collapsed comment from @bot)" in out
+    assert "node_id: c1" in out
+    assert "body: 1 lines," in out
+    assert "gh-llm pr comment-expand c1 --pr 77928 --repo PaddlePaddle/Paddle" in out
+    assert "gh-llm pr timeline-expand 2 --pr 77928 --repo PaddlePaddle/Paddle --auto-collapse-author BOT" in out
+    assert "self comment" in out
+    assert "END_MARKER" not in out
+
+
+def test_pr_view_auto_collapse_author_collapses_selected_reviews(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def events_with_noisy_review() -> list[dict[str, Any]]:
+        events = _base_events()
+        events[4] = {
+            **events[4],
+            "body": "review body from noisy bot",
+            "isMinimized": False,
+            "minimizedReason": None,
+            "author": {"login": "PaddlePaddle-bot"},
+        }
+        return events
+
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+    monkeypatch.setattr(sys.modules[__name__], "_events", events_with_noisy_review)
+
+    code = cli.run(
+        [
+            "pr",
+            "view",
+            "77928",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "2",
+            "--auto-collapse-author",
+            "PaddlePaddle-bot",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert "5. [2026-02-14 14:51 UTC] review/approved by @PaddlePaddle-bot" in out
+    assert "(auto-collapsed review from @PaddlePaddle-bot)" in out
+    assert "review_id: PRR_mock" in out
+    assert "gh-llm pr review-expand PRR_mock --pr 77928 --repo PaddlePaddle/Paddle" in out
+    assert "review body from noisy bot" not in out
+    assert "self comment" in out
+
+
 def test_pr_view_after_filters_incremental_events_and_avoids_forward_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1557,6 +1651,37 @@ def test_issue_view_and_expand_use_real_cursor_pagination(
     out = capsys.readouterr().out
     assert "## Comment ic1" in out
     assert "- Type: IssueComment" in out
+
+
+def test_issue_view_auto_collapse_author_collapses_selected_comments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+
+    code = cli.run(
+        [
+            "issue",
+            "view",
+            "77924",
+            "--repo",
+            "PaddlePaddle/Paddle",
+            "--page-size",
+            "2",
+            "--auto-collapse-author",
+            "bot",
+        ]
+    )
+    assert code == 0
+
+    out = capsys.readouterr().out
+    assert 'auto_collapse_authors: ["bot"]' in out
+    assert "(auto-collapsed comment from @bot)" in out
+    assert "node_id: ic1" in out
+    assert "gh-llm issue comment-expand ic1 --issue 77924 --repo PaddlePaddle/Paddle" in out
+    assert "self issue comment" in out
+    assert "ISSUE_END_MARKER" not in out
 
 
 def test_extract_diff_hunks_prefers_first_added_line_for_right_side() -> None:

@@ -24,6 +24,7 @@ def build_context_from_meta(
     timeline_before: str | None = None,
     timeline_unfiltered_count: int | None = None,
     timeline_filtered: bool = False,
+    auto_collapse_authors: tuple[str, ...] = (),
     filtered_pages: dict[int, TimelinePage] | None = None,
 ) -> TimelineContext:
     _validate_page_size(page_size)
@@ -52,6 +53,7 @@ def build_context_from_meta(
         timeline_before=timeline_before,
         timeline_unfiltered_count=timeline_unfiltered_count,
         timeline_filtered=timeline_filtered,
+        auto_collapse_authors=auto_collapse_authors,
         labels=meta.labels,
         kind=meta.kind,
         pr_reactions_summary=meta.reactions_summary,
@@ -99,6 +101,7 @@ class TimelinePager:
         show_details_blocks: bool = False,
         review_threads_window: int | None = 10,
         diff_hunk_lines: int | None = None,
+        auto_collapse_authors: tuple[str, ...] = (),
     ) -> tuple[TimelineContext, TimelinePage, TimelinePage | None]:
         _validate_page_size(page_size)
         window = TimelineWindow() if timeline_window is None else timeline_window
@@ -116,6 +119,7 @@ class TimelinePager:
                 show_details_blocks=show_details_blocks,
                 review_threads_window=review_threads_window,
                 diff_hunk_lines=diff_hunk_lines,
+                auto_collapse_authors=auto_collapse_authors,
             )
 
         first_page = self._client.fetch_timeline_forward(
@@ -147,6 +151,7 @@ class TimelinePager:
             total_count=total_count,
             total_pages=total_pages,
             fetched_at=fetched_at,
+            auto_collapse_authors=auto_collapse_authors,
         )
         self._remember_forward(context, page=1, cursor_used=None, page_result=first_page)
 
@@ -296,6 +301,7 @@ class TimelinePager:
         show_details_blocks: bool,
         review_threads_window: int | None,
         diff_hunk_lines: int | None,
+        auto_collapse_authors: tuple[str, ...],
     ) -> tuple[TimelineContext, TimelinePage, TimelinePage | None]:
         if timeline_window.after is not None:
             collected, total_count = self._collect_filtered_from_end(
@@ -335,6 +341,7 @@ class TimelinePager:
             timeline_before=timeline_window.before_text,
             timeline_unfiltered_count=total_count,
             timeline_filtered=True,
+            auto_collapse_authors=auto_collapse_authors,
             filtered_pages=filtered_pages,
         )
         first_page = filtered_pages[1]

@@ -82,6 +82,10 @@ gh-llm pr timeline-expand 2 --pr 77900 --repo PaddlePaddle/Paddle --after 2026-0
 gh-llm pr view 77900 --repo PaddlePaddle/Paddle --expand resolved,minimized
 gh-llm pr timeline-expand 2 --pr 77900 --repo PaddlePaddle/Paddle --expand all
 
+# Auto-collapse noisy comment/review authors in timeline output
+gh-llm pr view 77900 --repo PaddlePaddle/Paddle --auto-collapse-author PaddlePaddle-bot
+gh-llm pr timeline-expand 2 --pr 77900 --repo PaddlePaddle/Paddle --auto-collapse-author PaddlePaddle-bot,other-bot
+
 # Show full content for one comment node id
 gh-llm pr comment-expand IC_xxx --pr 77900 --repo PaddlePaddle/Paddle
 
@@ -125,6 +129,7 @@ gh-llm issue view 77924 --repo PaddlePaddle/Paddle
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
 gh-llm issue timeline-expand 2 --issue 77924 --repo PaddlePaddle/Paddle
 gh-llm issue timeline-expand 2 --issue 77924 --repo PaddlePaddle/Paddle --after 2026-04-08T02:41:17Z
+gh-llm issue view 77924 --repo PaddlePaddle/Paddle --auto-collapse-author PaddlePaddle-bot
 gh-llm issue comment-expand IC_xxx --issue 77924 --repo PaddlePaddle/Paddle
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --expand minimized,details
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --show meta,description
@@ -135,6 +140,8 @@ For incremental follow-ups, copy the previous output's `fetched_at` value into `
 When `--show` does not include `timeline` (for example `--show meta`, `--show summary`, or `--show actions`), both `pr view` and `issue view` stay on the lightweight metadata path and skip timeline bootstrap.
 
 Use `--show` to choose which output sections to render. Use `--expand` to automatically open folded content within those sections.
+
+Use `--auto-collapse-author <login>` on `pr view`, `pr timeline-expand`, `issue view`, or `issue timeline-expand` to replace selected authors' timeline comments/reviews with a compact placeholder that includes author, node/review id, and body size. Values are case-insensitive, may start with `@`, and support comma-separated or repeated flags. Without this option, output is unchanged. To view full content, run the emitted `comment-expand` / `review-expand` command, or rerun without `--auto-collapse-author`.
 
 `--expand` values:
 

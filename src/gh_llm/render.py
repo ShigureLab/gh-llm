@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from datetime import UTC
 from typing import TYPE_CHECKING, cast
 
@@ -48,6 +49,11 @@ def render_frontmatter(context: TimelineContext) -> list[str]:
                 ),
                 *([f"timeline_after: {context.timeline_after}"] if context.timeline_after else []),
                 *([f"timeline_before: {context.timeline_before}"] if context.timeline_before else []),
+                *(
+                    [f"auto_collapse_authors: {json.dumps(list(context.auto_collapse_authors), ensure_ascii=False)}"]
+                    if context.auto_collapse_authors
+                    else []
+                ),
                 f"page_size: {context.page_size}",
                 f"total_pages: {context.total_pages}",
             ]
@@ -379,7 +385,7 @@ def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list
         return []
     repo = f"{context.owner}/{context.name}"
     selector_name = "issue" if context.kind == "issue" else "pr"
-    filter_flags = _timeline_filter_flags(context)
+    timeline_expand_flags = _timeline_expand_flags(context)
     hidden_label = (
         f"Hidden timeline page: {hidden_pages[0]}"
         if len(hidden_pages) == 1
@@ -390,7 +396,7 @@ def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list
         hidden_label,
         *[
             _render_template(
-                t"- ⏎ `{display_command_with(f'{context.kind} timeline-expand {page} --{selector_name} {context.number} --repo {repo}{filter_flags}')}`"
+                t"- ⏎ `{display_command_with(f'{context.kind} timeline-expand {page} --{selector_name} {context.number} --repo {repo}{timeline_expand_flags}')}`"
             )
             for page in hidden_pages
         ],
@@ -411,6 +417,24 @@ def _render_item(index: int, event: TimelineEvent, context: TimelineContext, com
         f"(details body collapsed; {details_action})",
     )
     lines = [f"{index}. [{timestamp}] {event.kind} by @{event.actor}"]
+    auto_collapse_summary = _auto_collapse_summary(event=event, context=context)
+    if auto_collapse_summary is not None:
+        repo = f"{context.owner}/{context.name}"
+        if event.auto_collapse_kind == "comment":
+            lines.append("   Comment:")
+            lines.extend(_indented_tag_block("comment", auto_collapse_summary, indent="   "))
+            if event.reactions_summary:
+                lines.append(f"   Reactions: {event.reactions_summary}")
+            lines.append(
+                f"   ⏎ run `{display_command_with(f'{command_group} comment-expand {event.source_id} --{selector_name} {context.number} --repo {repo}')}` for full comment"
+            )
+            return lines
+        if event.auto_collapse_kind == "review":
+            lines.extend(_indent_block(auto_collapse_summary))
+            lines.append(
+                f"   ⏎ run `{display_command_with(f'pr review-expand {event.source_id} --pr {context.number} --repo {repo}')}` for full review"
+            )
+            return lines
     if event.kind == "comment":
         lines.append("   Comment:")
         lines.extend(_indented_tag_block("comment", display_summary, indent="   "))
@@ -449,6 +473,35 @@ def _render_item(index: int, event: TimelineEvent, context: TimelineContext, com
     return lines
 
 
+def _auto_collapse_summary(*, event: TimelineEvent, context: TimelineContext) -> str | None:
+    if not context.auto_collapse_authors or event.auto_collapse_kind not in {"comment", "review"}:
+        return None
+    actor_login = event.actor_login or ""
+    if not actor_login:
+        return None
+    selected = {author.casefold() for author in context.auto_collapse_authors}
+    if actor_login.casefold() not in selected:
+        return None
+
+    body_text = event.full_text if event.full_text is not None else event.summary
+    line_count, char_count = _text_stats(body_text)
+    id_label = "review_id" if event.auto_collapse_kind == "review" else "node_id"
+    return "\n".join(
+        [
+            f"(auto-collapsed {event.auto_collapse_kind} from @{event.actor})",
+            f"author: @{event.actor}",
+            f"{id_label}: {event.source_id}",
+            f"body: {line_count} lines, {char_count} chars",
+        ]
+    )
+
+
+def _text_stats(text: str) -> tuple[int, int]:
+    if not text:
+        return 0, 0
+    return len(text.splitlines()), len(text)
+
+
 def _render_template(template: Template) -> str:
     rendered: list[str] = []
     for index, segment in enumerate(template.strings):
@@ -477,6 +530,17 @@ def _timeline_filter_flags(context: TimelineContext) -> str:
         parts.extend(["--after", context.timeline_after])
     if context.timeline_before:
         parts.extend(["--before", context.timeline_before])
+    return (" " + " ".join(parts)) if parts else ""
+
+
+def _timeline_expand_flags(context: TimelineContext) -> str:
+    parts: list[str] = []
+    if context.timeline_after:
+        parts.extend(["--after", context.timeline_after])
+    if context.timeline_before:
+        parts.extend(["--before", context.timeline_before])
+    for author in context.auto_collapse_authors:
+        parts.extend(["--auto-collapse-author", shlex.quote(author)])
     return (" " + " ".join(parts)) if parts else ""
 
 
