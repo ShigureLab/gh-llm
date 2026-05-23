@@ -68,18 +68,14 @@ select = [
   "RSE",
   # Refurb
   "FURB",
-  # Flake8-future-annotations
-  "FA",
   # Yesqa
   "RUF100",
 ]
 ignore = [
   "E501", # line too long, duplicate with ruff fmt
 ]
-future-annotations = true
 
 [tool.ruff.lint.isort]
-required-imports = ["from __future__ import annotations"]
 known-first-party = ["gh_llm"]
 combine-as-imports = true
 
