@@ -30,6 +30,7 @@ from gh_llm.models import (
     TimelineEvent,
     TimelinePage,
 )
+from gh_llm.transport_errors import looks_like_transport_error
 
 if TYPE_CHECKING:
     from gh_llm.models import TimelineWindow
@@ -1529,7 +1530,12 @@ mutation($id:ID!,$body:String!){
         return updated_id or None
 
     def _get_viewer_login(self) -> str:
-        payload = _run_command_json(["gh", "api", "user"])
+        payload = _run_command_json(
+            ["gh", "api", "user"],
+            max_attempts=GRAPHQL_MAX_ATTEMPTS,
+            backoff_base_seconds=GRAPHQL_BACKOFF_BASE_SECONDS,
+            backoff_max_seconds=GRAPHQL_BACKOFF_MAX_SECONDS,
+        )
         login = _as_optional_str(payload.get("login"))
         return login or ""
 
@@ -3667,40 +3673,7 @@ def _reaction_emoji(content: str) -> str:
 
 
 def _is_retryable_gh_error(stderr: str) -> bool:
-    lowered = stderr.lower()
-    retryable_patterns = (
-        'post "https://api.github.com/graphql": eof',
-        "eof",
-        "timeout",
-        "i/o timeout",
-        "context deadline exceeded",
-        "client.timeout exceeded",
-        "request canceled",
-        "tls handshake timeout",
-        "remote error: tls",
-        "connection reset",
-        "connection reset by peer",
-        "connection refused",
-        "connection closed",
-        "connection aborted",
-        "broken pipe",
-        "temporary failure",
-        "temporarily unavailable",
-        "network is unreachable",
-        "server misbehaving",
-        "stream error",
-        "goaway",
-        "proxyconnect",
-        "http 500",
-        "http 502",
-        "http 503",
-        "http 504",
-        "500 internal server error",
-        "502 bad gateway",
-        "503 service unavailable",
-        "504 gateway timeout",
-    )
-    return any(pattern in lowered for pattern in retryable_patterns)
+    return looks_like_transport_error(stderr)
 
 
 def _combine_command_error_output(stderr: str, stdout: str) -> str:

@@ -2724,6 +2724,60 @@ def test_graphql_stream_error_retries_with_backoff(
     assert state["failed_once"] is True
 
 
+def test_rest_viewer_login_eof_retries_with_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    responder = GhResponder()
+    state = {"failed_once": False}
+
+    def flaky_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        if cmd == ["gh", "api", "user"] and not state["failed_once"]:
+            state["failed_once"] = True
+            return FakeCompletedProcess("", returncode=1, stderr='Get "https://api.github.com/user": EOF')
+        return responder.run(cmd, check=check, capture_output=capture_output, text=text)
+
+    def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(github_api.subprocess, "run", flaky_run)
+    monkeypatch.setattr(github_api.time, "sleep", no_sleep)
+
+    code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "### Page 1/4" in out
+    assert state["failed_once"] is True
+
+
+def test_graphql_mutation_transport_failure_uses_mutation_retry_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"attempts": 0}
+
+    def failing_run(cmd: list[str], *, check: bool, capture_output: bool, text: bool) -> FakeCompletedProcess:
+        del check, capture_output, text
+        if cmd[:3] == ["gh", "api", "graphql"]:
+            state["attempts"] += 1
+            return FakeCompletedProcess("", returncode=1, stderr='Post "https://api.github.com/graphql": EOF')
+        return FakeCompletedProcess("", returncode=1, stderr="unexpected command")
+
+    def no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(github_api.subprocess, "run", failing_run)
+    monkeypatch.setattr(github_api.time, "sleep", no_sleep)
+
+    try:
+        github_api.GitHubClient().resolve_review_thread("PRRT_retry_cap")
+    except RuntimeError as error:
+        assert 'Post "https://api.github.com/graphql": EOF' in str(error)
+    else:
+        raise AssertionError("expected mutation transport failure")
+
+    assert state["attempts"] == github_api.GRAPHQL_MUTATION_MAX_ATTEMPTS
+
+
 def test_graphql_eof_failure_prints_layered_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

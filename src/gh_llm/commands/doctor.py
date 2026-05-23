@@ -206,7 +206,7 @@ def _reconcile_auth_status_probe(
     return _ProbeResult(
         name=auth_status_probe.name,
         command=auth_status_probe.command,
-        ok=True,
+        ok=False,
         summary="warning (API probes ok)",
         detail="\n\n".join(detail_parts),
         critical=False,
