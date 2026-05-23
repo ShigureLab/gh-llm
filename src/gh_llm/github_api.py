@@ -2213,7 +2213,7 @@ def _run_command_json(
 
         stderr = result.stderr.strip()
         error_output = _combine_command_error_output(result.stderr, result.stdout)
-        if attempt >= attempts or not _is_retryable_gh_error(error_output):
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -2243,7 +2243,7 @@ def _run_command_json_any(
 
         stderr = result.stderr.strip()
         error_output = _combine_command_error_output(result.stderr, result.stdout)
-        if attempt >= attempts or not _is_retryable_gh_error(error_output):
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -2272,7 +2272,7 @@ def _run_command_text(
             return result.stdout
         stderr = result.stderr.strip()
         error_output = _combine_command_error_output(result.stderr, result.stdout)
-        if attempt >= attempts or not _is_retryable_gh_error(error_output):
+        if attempt >= attempts or not looks_like_transport_error(error_output):
             raise GhCommandError(
                 cmd=cmd,
                 stderr=stderr,
@@ -3670,10 +3670,6 @@ def _reaction_emoji(content: str) -> str:
         "EYES": "👀",
     }
     return mapping.get(content, "")
-
-
-def _is_retryable_gh_error(stderr: str) -> bool:
-    return looks_like_transport_error(stderr)
 
 
 def _combine_command_error_output(stderr: str, stdout: str) -> str:

@@ -106,7 +106,7 @@ def _diagnose_command_error(error: GhCommandError) -> _Diagnosis:
             ),
         )
 
-    if _is_graphql_backed_command(error.cmd) and _looks_like_transport_error(lowered):
+    if _is_graphql_backed_command(error.cmd) and looks_like_transport_error(lowered):
         attempt_suffix = _format_attempt_suffix(error)
         return _Diagnosis(
             headline=f"GitHub GraphQL request failed{attempt_suffix}.",
@@ -151,10 +151,6 @@ def _auth_status_command() -> str:
 
 def _is_graphql_backed_command(cmd: Sequence[str]) -> bool:
     return tuple(str(part) for part in cmd[:3]) in _GRAPHQL_BACKED_COMMANDS
-
-
-def _looks_like_transport_error(lowered: str) -> bool:
-    return looks_like_transport_error(lowered)
 
 
 def _looks_like_auth_error(lowered: str) -> bool:
