@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import sys
 from datetime import UTC, datetime
 from difflib import get_close_matches

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import sys
 
 from gh_llm.cli import run

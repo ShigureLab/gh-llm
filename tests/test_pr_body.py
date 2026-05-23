@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from gh_llm.pr_body import (
     build_pull_request_body_scaffold,
     extract_markdown_section_titles,
