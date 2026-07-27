@@ -1757,7 +1757,7 @@ mutation($id:ID!,$body:String!){
                 candidates.append(candidate_path)
         if not candidates:
             return None
-        return sorted(candidates, key=str.casefold)[0]
+        return min(candidates, key=str.casefold)
 
     def _list_pull_request_template_directories(
         self,
