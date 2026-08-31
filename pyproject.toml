@@ -29,7 +29,7 @@ Issues = "https://github.com/ShigureLab/gh-llm/issues"
 gh-llm = "gh_llm.__main__:main"
 
 [dependency-groups]
-dev = ["ty>=0.0.74", "ruff>=0.16.4", "pytest>=9.1.1", "pytest-rerunfailures>=16.6"]
+dev = ["ty>=0.0.75", "ruff>=0.16.5", "pytest>=9.1.1", "pytest-rerunfailures>=16.6"]
 
 [tool.ruff]
 line-length = 120
