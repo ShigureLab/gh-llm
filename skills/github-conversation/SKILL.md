@@ -21,6 +21,7 @@ metadata:
 1. Use `gh-llm` for reading context (timeline, collapsed items, review threads, checks) and structured review actions (reply, submit, resolve).
 2. Use `gh` for simple write actions (comment, reactions, labels, assignees, reviewers, close/reopen, merge).
 3. If context is incomplete, do not reply yet; expand first.
+4. Apply the current task's publication mode and authorized scope to every GitHub write, including reactions and resolving threads. In read-only or dry-run mode, keep proposed updates local. `viewerCanReact` indicates account capability, not operator authorization.
 
 ## Message body fidelity
 
@@ -196,8 +197,9 @@ Prefer a reaction on the original comment, review, or PR when there is no new in
 
 1. React to the specific item you mean; agreement with one inline comment does not imply agreement with an entire review.
 2. Choose one fitting reaction and skip it if the current account already added it. Do not react to your own messages or add a text reply that merely repeats the reaction.
-3. Use text for answers, disagreements, remaining blockers, and verified review closure. Reactions do not replace a formal `APPROVE` / `REQUEST_CHANGES` review or the confirmation and resolution workflow below.
-4. Prefer a brief explanation over 👎 or 😕 for technical disagreement or missing context; those reactions alone do not tell the author what to change.
+3. On automatic follow-ups, first verify that earlier review and publication are complete. If there is no new evidence, finding status, decision, or request, make no GitHub-visible update, including reactions. An absent reaction alone is not a reason to write.
+4. Use text for answers, disagreements, remaining blockers, and verified review closure. Reactions do not replace a formal `APPROVE` / `REQUEST_CHANGES` review or the confirmation and resolution workflow below.
+5. Prefer a brief explanation over 👎 or 😕 for technical disagreement or missing context; those reactions alone do not tell the author what to change.
 
 Use `gh api graphql` with the original item's node ID (`IC_...`, `PRRC_...`, `PRR_...`, or the PR's node ID), not a review thread ID (`PRRT_...`) or a numeric REST ID. Review bodies themselves support reactions. See GitHub's [reaction API reference](https://docs.github.com/en/graphql/reference/reactions).
 
