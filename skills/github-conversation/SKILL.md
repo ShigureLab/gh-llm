@@ -18,8 +18,8 @@ metadata:
 
 ## Tool split
 
-1. Use `gh-llm` for reading context (timeline, collapsed items, review threads, checks).
-2. Use `gh` for simple write actions (comment, labels, assignees, reviewers, close/reopen, merge).
+1. Use `gh-llm` for reading context (timeline, collapsed items, review threads, checks) and structured review actions (reply, submit, resolve).
+2. Use `gh` for simple write actions (comment, reactions, labels, assignees, reviewers, close/reopen, merge).
 3. If context is incomplete, do not reply yet; expand first.
 
 ## Message body fidelity
@@ -183,6 +183,50 @@ For PRs, check:
 
 ## Reply workflow
 
+### 0) Choose a reaction when acknowledgment is enough
+
+Prefer a reaction on the original comment, review, or PR when there is no new information to add. This avoids standalone replies such as "Agreed", "Thanks", or "Great PR".
+
+| Reaction | Use when                                                                                                                             | GraphQL content |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| 👍       | You agree with a comment or review conclusion, or appreciate a well-executed PR.                                                     | `THUMBS_UP`     |
+| ❤️       | You want to thank someone for a helpful explanation, careful investigation, or extra effort.                                         | `HEART`         |
+| 🎉       | You are celebrating a completed milestone, a difficult fix landing, or a release.                                                    | `HOORAY`        |
+| 👀       | You are actively investigating a report or taking up a review; this acknowledges attention without implying agreement or completion. | `EYES`          |
+
+1. React to the specific item you mean; agreement with one inline comment does not imply agreement with an entire review.
+2. Choose one fitting reaction and skip it if the current account already added it. Do not react to your own messages or add a text reply that merely repeats the reaction.
+3. Use text for answers, disagreements, remaining blockers, and verified review closure. Reactions do not replace a formal `APPROVE` / `REQUEST_CHANGES` review or the confirmation and resolution workflow below.
+4. Prefer a brief explanation over 👎 or 😕 for technical disagreement or missing context; those reactions alone do not tell the author what to change.
+
+Use `gh api graphql` with the original item's node ID (`IC_...`, `PRRC_...`, `PRR_...`, or the PR's node ID), not a review thread ID (`PRRT_...`) or a numeric REST ID. Review bodies themselves support reactions. See GitHub's [reaction API reference](https://docs.github.com/en/graphql/reference/reactions).
+
+Check the target and whether the current account has already reacted:
+
+```bash
+gh api graphql -f subjectId='<node_id>' -f query='
+query($subjectId: ID!) {
+  node(id: $subjectId) {
+    __typename
+    ... on Reactable {
+      viewerCanReact
+      reactionGroups { content viewerHasReacted }
+    }
+  }
+}'
+```
+
+If permitted and the selected reaction is absent, add it and verify the returned reaction ID and content:
+
+```bash
+gh api graphql -f subjectId='<node_id>' -f content=THUMBS_UP -f query='
+mutation($subjectId: ID!, $content: ReactionContent!) {
+  addReaction(input: {subjectId: $subjectId, content: $content}) {
+    reaction { id content }
+  }
+}'
+```
+
 ### 1) Reply to one thread with one intent
 
 A single reply should answer the target point only.
@@ -316,6 +360,31 @@ Use the final review summary to group the round:
 1. what is blocking
 2. what is optional
 3. what is already good
+
+### Follow up on review points you raised
+
+When re-reviewing a PR after updates, close the loop on your earlier findings before adding a new round of feedback.
+
+1. Re-read each relevant original thread and inspect the current code and validation against the concern you raised. An author's "fixed", an outdated diff, or green CI alone does not establish that the concern is resolved.
+2. Once verified, post a short confirmation **in that original thread**, identifying the fix or accepted explanation and the evidence you checked. For example: "Confirmed: `<commit>` handles the empty-input case; `<test>` passes." Apply the repository's attribution requirements to the reply.
+3. After the confirmation succeeds, mark that same thread resolved. A top-level round-up or a 👍 on the author's reply does not complete this step. If the confirmation is already present, do not repeat it; if the thread is already resolved, do not reopen it just to close it again.
+4. If the fix is partial, unverified, or disputed, explain what remains in the original thread and leave it unresolved. Keep this follow-up scoped to your findings; do not bulk-resolve other reviewers' threads.
+5. For a finding in a top-level review body with no resolvable thread, post a concise follow-up linking to the original review. Only review threads have a resolved state.
+6. Once your blockers are cleared, update your formal review conclusion as appropriate for the current PR. Resolving threads alone does not replace an earlier `REQUEST_CHANGES` review with `APPROVE`.
+
+After reading the thread and verifying the fix, write the confirmation to a body file:
+
+```bash
+gh-llm pr thread-reply <PRRT_id> --body-file /tmp/review-confirmation.md --pr <pr> --repo <owner/repo>
+```
+
+Wait for `status: replied` before resolving:
+
+```bash
+gh-llm pr thread-resolve <PRRT_id> --pr <pr> --repo <owner/repo>
+```
+
+Require `status: resolved` and re-read with `thread-expand` to confirm the reply and resolved state. If a write fails or its result is uncertain, refresh the thread before retrying so you do not duplicate replies; report any permission failure without claiming resolution.
 
 ### As PR author
 
