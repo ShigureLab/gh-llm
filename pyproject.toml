@@ -1,6 +1,6 @@
 [project]
 name = "gh-llm"
-version = "0.1.16"
+version = "0.1.17"
 description = "🤖 CLI tooling for LLM-first GitHub reading and review workflows."
 readme = "README.md"
 requires-python = ">=3.14"
