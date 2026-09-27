@@ -32,7 +32,7 @@ GitHub stores the body text exactly as sent.
 3. Use `--body` only for short single-paragraph text.
 4. In the command patterns documented by this skill, every write action that accepts `--body` also has a `--body-file` form.
 5. For quotes, bullets, code fences, or multiple paragraphs, prefer `--body-file` with a file or `-` on standard input.
-6. For review suggestions that span multiple lines, prefer `--suggestion-file`.
+6. For code suggestions, put the explanation and a fenced `suggestion` block in the same Markdown body file, then send it with `review-comment --body-file`. The command sends the complete body as written; include the suggestion block once.
 
 Safe patterns:
 
@@ -249,10 +249,9 @@ When making technical claims, include at least one concrete reference:
 Only treat a GitHub write action as completed after the command returns a success status or object id.
 
 1. Do not say "I already left an inline comment" unless the command output confirms it.
-2. For `review-comment`, wait for `status: commented` and record the returned `thread` / `comment` id.
-3. For `review-suggest`, wait for `status: suggested` and record the returned `thread` / `comment` id.
-4. For `thread-reply`, wait for `status: replied` and record the returned `thread` / `reply_comment_id`.
-5. If a write command was only drafted, described, or planned, say so explicitly instead of implying it already happened.
+2. For `review-comment`, including comments with suggestion blocks, wait for `status: commented` and record the returned `thread` / `comment` id.
+3. For `thread-reply`, wait for `status: replied` and record the returned `thread` / `reply_comment_id`.
+4. If a write command was only drafted, described, or planned, say so explicitly instead of implying it already happened.
 
 ### 3) Quote only when needed
 
@@ -303,8 +302,8 @@ gh-llm pr review-start --pr <pr> --repo <owner/repo> --context-lines 3
 
 3. Before writing a new comment, check whether the same location already has unresolved review threads.
 4. Use one pending review for one review round. Prefer multiple inline comments plus one final summary, not many separate top-level reviews.
-5. Use `review-suggest` only when the exact replacement is clear and small enough to be safely suggested inline.
-6. Use `review-comment` for questions, design concerns, missing tests, missing context, or changes too large for a suggestion block.
+5. Whenever you can provide a verified replacement for a specific diff line or continuous range, prefer a `suggestion` block in the `review-comment` body so the author can apply the change directly. Pair it with an explanation of the problem.
+6. Use prose-only `review-comment` bodies for questions, design concerns, or fixes whose exact replacement is not known. Do not invent a patch just to include a suggestion.
 7. Distinguish severity clearly:
    - blocking: correctness, behavior regression, missing required tests, broken API/ABI, unsafe edge case
    - non-blocking: readability, style, naming, optional refactor, small follow-up
@@ -321,23 +320,29 @@ gh-llm pr review-comment \
   --side RIGHT \
   --body '<comment>' \
   --pr <pr> --repo <owner/repo>
-
-gh-llm pr review-suggest \
-  --path 'path/to/file' \
-  --line <line> \
-  --side RIGHT \
-  --body '<why>' \
-  --suggestion '<replacement>' \
-  --pr <pr> --repo <owner/repo>
-
-gh-llm pr review-suggest \
-  --path 'path/to/file' \
-  --line <line> \
-  --side RIGHT \
-  --body-file reason.md \
-  --suggestion-file replacement.txt \
-  --pr <pr> --repo <owner/repo>
 ```
+
+For a concrete code fix, write the complete review body with the suggestion embedded:
+
+````bash
+cat <<'EOF' > /tmp/review-comment.md
+Use the new API to handle this case.
+
+```suggestion
+new_api_call()
+```
+EOF
+
+gh-llm pr review-comment \
+  --path 'path/to/file' \
+  --line <line> \
+  --side RIGHT \
+  --body-file /tmp/review-comment.md \
+  --head <head_sha> \
+  --pr <pr> --repo <owner/repo>
+````
+
+Use the commentable line labels and `head_sha` from `review-start`. For a multi-line replacement, add `--start-line <first_line>` and set `--line <last_line>` to the end of the continuous range on the same side. The suggestion replaces the entire selected range, so include any unchanged lines within that range in the replacement. Include any repository-required agent attribution in the body before sending.
 
 Then submit one review:
 
@@ -412,16 +417,20 @@ gh-llm pr thread-expand <PRRT_id> --pr <pr> --repo <owner/repo>
 Prefer the smallest tool that matches the intent:
 
 1. `thread-reply`: respond inside an existing review thread.
-2. `review-comment`: raise a new inline point without an exact replacement.
-3. `review-suggest`: propose a concrete patch the author can apply directly.
+2. `review-comment`: raise a new inline point, embedding a `suggestion` block whenever an exact replacement is available.
 
-Use `review-suggest` by default when all of the following are true:
+Prefer an applicable suggestion when the change is local to one diff range and you have verified the replacement. Keep broader design discussion or uncertain fixes in prose; a suggestion should give the author code they can safely apply.
 
-1. the change is local to one hunk
-2. the replacement text is known exactly
-3. the explanation fits in one short rationale paragraph
+### Reply to a suggestion
 
-Do not force `review-suggest` when the fix spans multiple files, requires design discussion, or depends on behavior you have not verified.
+Read the original suggestion and current code before replying. Use the original thread ID returned by `review-comment` or shown in the PR context:
+
+```bash
+gh-llm pr thread-expand <PRRT_id> --pr <pr> --repo <owner/repo>
+gh-llm pr thread-reply <PRRT_id> --body-file /tmp/suggestion-reply.md --pr <pr> --repo <owner/repo>
+```
+
+Write the reply file with the status and evidence: adopted (commit and validation), adapted (what differs and why), or declined (reason and next step). Apply the repository's attribution requirements and wait for `status: replied`. Reply in the original thread instead of creating a duplicate review comment. If proposing alternative code for the same range, embed its `suggestion` block in the reply body; if the replacement targets a different range, create a `review-comment` at that range instead. Resolve the original thread only when the fix or decision is complete, following the verification workflow above.
 
 ## Issue workflow
 

@@ -304,39 +304,12 @@ def register_pr_parser(subparsers: Any) -> None:
     add_body_input_arguments(
         review_comment_parser,
         required=True,
-        body_help="review comment body",
+        body_help="complete Markdown review body, including any suggestion blocks",
         file_help="read review comment body from file (use `-` to read from standard input)",
     )
     review_comment_parser.add_argument("--pr", help="PR number/url/branch")
     review_comment_parser.add_argument("--repo", help="repository in OWNER/REPO format")
     review_comment_parser.set_defaults(handler=cmd_pr_review_comment)
-
-    review_suggest_parser = pr_subparsers.add_parser(
-        "review-suggest", help="add an inline code suggestion on a diff line"
-    )
-    review_suggest_parser.add_argument("--path", required=True, help="file path in pull request")
-    review_suggest_parser.add_argument("--line", required=True, type=int, help="line number on selected side")
-    review_suggest_parser.add_argument("--side", choices=["RIGHT", "LEFT"], default="RIGHT", help="diff side")
-    add_body_input_arguments(
-        review_suggest_parser,
-        required=False,
-        body_help="review comment body before suggestion block",
-        file_help="read review comment body from file (use `-` to read from standard input)",
-        default="Suggested change",
-    )
-    review_suggest_suggestion_group = review_suggest_parser.add_mutually_exclusive_group(required=True)
-    review_suggest_suggestion_group.add_argument(
-        "--suggestion",
-        help="replacement content inserted inside ```suggestion block",
-    )
-    review_suggest_suggestion_group.add_argument(
-        "--suggestion-file",
-        help="read replacement content from file (use `-` to read from standard input)",
-    )
-    review_suggest_parser.add_argument("--head", help="expected PR head sha for stale-snapshot protection")
-    review_suggest_parser.add_argument("--pr", help="PR number/url/branch")
-    review_suggest_parser.add_argument("--repo", help="repository in OWNER/REPO format")
-    review_suggest_parser.set_defaults(handler=cmd_pr_review_suggest)
 
     review_submit_parser = pr_subparsers.add_parser(
         "review-submit", help="submit a PR review (approve, request changes, or comment)"
@@ -361,17 +334,6 @@ def register_pr_parser(subparsers: Any) -> None:
 
 def _resolve_body_argument(args: Any, *, default: str = "") -> str:
     return resolve_file_or_inline_text(args, text_attr="body", file_attr="body_file", default=default)
-
-
-def _resolve_suggestion_argument(args: Any) -> str:
-    return resolve_file_or_inline_text(args, text_attr="suggestion", file_attr="suggestion_file")
-
-
-def _validate_review_suggest_stdin_sources(args: Any) -> None:
-    if getattr(args, "body_file", None) == "-" and getattr(args, "suggestion_file", None) == "-":
-        raise RuntimeError(
-            "`--body-file -` cannot be combined with `--suggestion-file -`; standard input can only be consumed once"
-        )
 
 
 def _resolve_review_submit_body(args: Any) -> str:
@@ -894,16 +856,12 @@ def cmd_pr_review_start(args: Any) -> int:
     print(f"Δ full diff: `gh pr diff {meta.ref.number} --repo {repo}`")
     head_flag = f" --head {pinned_head}" if pinned_head is not None else ""
     comment_template_cmd = display_command_with(
-        f"pr review-comment --path '<path>' --line <line> --side RIGHT --body '<review_comment>'{head_flag} --pr {meta.ref.number} --repo {repo}"
-    )
-    suggestion_template_cmd = display_command_with(
-        f"pr review-suggest --path '<path>' --line <line> --side RIGHT --body '<reason>' --suggestion '<replacement>'{head_flag} --pr {meta.ref.number} --repo {repo}"
+        f"pr review-comment --path '<path>' --line <line> --side RIGHT --body-file '<review_comment.md>'{head_flag} --pr {meta.ref.number} --repo {repo}"
     )
     range_template_cmd = display_command_with(
-        f"pr review-comment --path '<path>' --start-line <start_line> --line <line> --side RIGHT --body '<review_comment>'{head_flag} --pr {meta.ref.number} --repo {repo}"
+        f"pr review-comment --path '<path>' --start-line <start_line> --line <line> --side RIGHT --body-file '<review_comment.md>'{head_flag} --pr {meta.ref.number} --repo {repo}"
     )
     print(f"Comment template: `{comment_template_cmd}`")
-    print(f"Suggestion template: `{suggestion_template_cmd}`")
     print(f"Multi-line template: `{range_template_cmd}`")
     print()
 
@@ -1108,41 +1066,6 @@ def cmd_pr_review_comment(args: Any) -> int:
     if comment_id:
         print(f"comment: {comment_id}")
     print("status: commented")
-    return 0
-
-
-def cmd_pr_review_suggest(args: Any) -> int:
-    _validate_review_suggest_stdin_sources(args)
-    client = GitHubClient()
-    meta = _resolve_pr_meta(client=client, args=args)
-    _validate_pr_head_snapshot(meta=meta, requested_head=_resolve_requested_head(args))
-    start_line = _resolve_start_line(args)
-    start_side = _resolve_start_side(args)
-    _validate_review_thread_target(
-        client=client,
-        args=args,
-        path=str(args.path),
-        line=int(args.line),
-        side=str(args.side),
-        start_line=start_line,
-        start_side=start_side,
-    )
-    suggestion = _resolve_suggestion_argument(args).rstrip("\n")
-    body = _resolve_body_argument(args, default="Suggested change")
-    full_body = f"{body.rstrip()}\n\n```suggestion\n{suggestion}\n```"
-    thread_id, comment_id = client.add_pull_request_review_thread_comment(
-        ref=meta.ref,
-        path=str(args.path),
-        line=int(args.line),
-        side=str(args.side),
-        start_line=start_line,
-        start_side=start_side,
-        body=full_body,
-    )
-    print(f"thread: {thread_id}")
-    if comment_id:
-        print(f"comment: {comment_id}")
-    print("status: suggested")
     return 0
 
 

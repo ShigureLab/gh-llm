@@ -221,7 +221,7 @@ gh-llm pr review-start --pr 78255 --repo PaddlePaddle/Paddle --path 'TensorBody.
 gh-llm pr review-start --pr 78255 --repo PaddlePaddle/Paddle --page 2 --page-size 5 --head <head_sha>
 ```
 
-It prints changed-file page summary, existing review-thread summaries with lightweight comment previews inline on matching diff lines when possible, per-hunk commentable LEFT/RIGHT line ranges, numbered diff lines, and ready-to-run comment/suggestion commands.
+It prints changed-file page summary, existing review-thread summaries with lightweight comment previews inline on matching diff lines when possible, per-hunk commentable LEFT/RIGHT line ranges, numbered diff lines, and ready-to-run review-comment commands.
 Generated follow-up commands reuse `--head <head_sha>` automatically so pagination and inline review commands stay on the same PR snapshot; stale snapshots are rejected with a refresh hint.
 Use `--context-lines <n>` when the GitHub patch hunk is too tight and you need a small amount of extra unchanged code around it.
 
@@ -245,31 +245,35 @@ gh-llm pr review-comment \
 
 ### 3) Add inline suggestion
 
-```bash
-gh-llm pr review-suggest \
-  --path 'path/to/file' \
-  --line 123 \
-  --side RIGHT \
-  --body 'Suggested update' \
-  --suggestion 'replacement_code_here' \
-  --pr 77938 --repo PaddlePaddle/Paddle
+When the replacement is known and verified, prefer an applicable suggestion over describing the code change in prose. Put the explanation and a fenced `suggestion` block in one complete Markdown body, then send it with `review-comment`. The body is sent as written.
 
-gh-llm pr review-suggest \
-  --path 'path/to/file' \
-  --line 123 \
-  --side RIGHT \
-  --body-file suggestion-reason.md \
-  --suggestion 'replacement_code_here' \
-  --pr 77938 --repo PaddlePaddle/Paddle
+````bash
+cat <<'EOF' > /tmp/review-comment.md
+Use the new API to handle this case.
 
-gh-llm pr review-suggest \
-  --path 'path/to/file' \
-  --line 123 \
-  --side RIGHT \
-  --body-file suggestion-reason.md \
-  --suggestion-file replacement.txt \
-  --pr 77938 --repo PaddlePaddle/Paddle
+```suggestion
+new_api_call()
 ```
+EOF
+
+gh-llm pr review-comment \
+  --path 'path/to/file' \
+  --line 123 \
+  --side RIGHT \
+  --body-file /tmp/review-comment.md \
+  --pr 77938 --repo PaddlePaddle/Paddle
+````
+
+For a replacement spanning multiple original lines, add `--start-line <first_line>` and use `--line <last_line>` for the continuous range. Include the full replacement for that range in the suggestion block. Reuse `--head <head_sha>` from `review-start` to reject stale review locations. A successful suggestion comment reports `status: commented` and returns the thread/comment IDs.
+
+To reply to an existing suggestion, read its thread first and reply in the same thread:
+
+```bash
+gh-llm pr thread-expand <PRRT_id> --pr <pr> --repo <owner/repo>
+gh-llm pr thread-reply <PRRT_id> --body-file reply.md --pr <pr> --repo <owner/repo>
+```
+
+State whether the suggestion was adopted, adapted, or declined, with the relevant commit or validation. Wait for `status: replied` before treating the reply as sent.
 
 ### 4) Submit review
 
@@ -291,9 +295,7 @@ Pick the strongest explicit review outcome the evidence supports:
 - `REQUEST_CHANGES`: blocking issues remain
 - `COMMENT`: non-blocking notes or intermediate status only
 
-`pr comment-edit`, `issue comment-edit`, `thread-reply`, `review-comment`, `review-suggest`, and `review-submit` all support `--body-file -` to read multi-line text from standard input. `review-suggest` also supports `--suggestion-file -` for the suggestion block itself.
-
-> Note: `review-suggest --body-file - --suggestion-file -` is intentionally rejected because standard input can only be consumed once. Use separate files when both the reason text and suggestion block need external input.
+`pr comment-edit`, `issue comment-edit`, `thread-reply`, `review-comment`, and `review-submit` all support `--body-file -` to read multi-line text from standard input.
 
 ## Multiline body safety
 

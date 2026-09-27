@@ -1753,8 +1753,8 @@ def test_extract_diff_hunks_uses_real_new_file_line_numbers_on_right_side() -> N
             "         comment_cmd = display_command_with(",
             "             f\"pr review-comment --path '{hunk.path}' --line {hunk.anchor_line} --side RIGHT --body '<review_comment>' --pr {meta.ref.number} --repo {repo}\"",
             "         )",
-            "         suggest_cmd = display_command_with(",
-            "             f\"pr review-suggest --path '{hunk.path}' --line {hunk.anchor_line} --side RIGHT --body '<reason>' --suggestion '<replacement>' --pr {meta.ref.number} --repo {repo}\"",
+            "         file_comment_cmd = display_command_with(",
+            "             f\"pr review-comment --path '{hunk.path}' --line {hunk.anchor_line} --side RIGHT --body-file '<review_comment.md>' --pr {meta.ref.number} --repo {repo}\"",
             "         )",
         ]
     )
@@ -1870,15 +1870,11 @@ def test_pr_review_actions_for_llm_flow(
     assert "Hunks on this page: 1" in out
     assert "gh pr diff 77928 --repo PaddlePaddle/Paddle" in out
     assert (
-        "gh-llm pr review-comment --path '<path>' --line <line> --side RIGHT --body '<review_comment>' --head 3333333333333333333333333333333333333333 --pr 77928 --repo PaddlePaddle/Paddle"
+        "gh-llm pr review-comment --path '<path>' --line <line> --side RIGHT --body-file '<review_comment.md>' --head 3333333333333333333333333333333333333333 --pr 77928 --repo PaddlePaddle/Paddle"
         in out
     )
     assert (
-        "gh-llm pr review-suggest --path '<path>' --line <line> --side RIGHT --body '<reason>' --suggestion '<replacement>' --head 3333333333333333333333333333333333333333 --pr 77928 --repo PaddlePaddle/Paddle"
-        in out
-    )
-    assert (
-        "gh-llm pr review-comment --path '<path>' --start-line <start_line> --line <line> --side RIGHT --body '<review_comment>' --head 3333333333333333333333333333333333333333 --pr 77928 --repo PaddlePaddle/Paddle"
+        "gh-llm pr review-comment --path '<path>' --start-line <start_line> --line <line> --side RIGHT --body-file '<review_comment.md>' --head 3333333333333333333333333333333333333333 --pr 77928 --repo PaddlePaddle/Paddle"
         in out
     )
     assert "gh-llm pr thread-expand <thread_id> --pr 77928 --repo PaddlePaddle/Paddle" in out
@@ -1919,20 +1915,20 @@ def test_pr_review_actions_for_llm_flow(
     assert "comment: PRRC_new_1" in out
     assert "status: commented" in out
 
+    suggestion_file = tmp_path / "review-comment.md"
+    suggestion_file.write_text("nits\n\n```suggestion\nnew_api_call()\n```\n", encoding="utf-8")
     code = cli.run(
         [
             "pr",
-            "review-suggest",
+            "review-comment",
             "--path",
             "python/test_file.py",
             "--line",
             "20",
             "--side",
             "RIGHT",
-            "--body",
-            "nits",
-            "--suggestion",
-            "new_api_call()",
+            "--body-file",
+            str(suggestion_file),
             "--pr",
             "77928",
             "--repo",
@@ -1941,7 +1937,7 @@ def test_pr_review_actions_for_llm_flow(
     )
     assert code == 0
     out = capsys.readouterr().out
-    assert "status: suggested" in out
+    assert "status: commented" in out
 
     code = cli.run(
         [
@@ -3181,7 +3177,8 @@ def test_pr_thread_reply_supports_body_file(
     responder = GhResponder()
     monkeypatch.setattr(github_api.subprocess, "run", responder.run)
     body_file = tmp_path / "reply.md"
-    body_file.write_text("> quoted context\n\nreply from file\n", encoding="utf-8")
+    body = "> quoted context\n\nAlternative for the same range:\n\n```suggestion\nnew_api_call()\n```\n"
+    body_file.write_text(body, encoding="utf-8")
 
     code = cli.run(
         [
@@ -3204,7 +3201,7 @@ def test_pr_thread_reply_supports_body_file(
     reply_call = next(
         call for call in graphql_calls if "addPullRequestReviewThreadReply" in _extract_form(call, "query")
     )
-    assert _extract_field(reply_call, "body") == "> quoted context\n\nreply from file\n"
+    assert _extract_field(reply_call, "body") == body
 
 
 def test_pr_review_comment_supports_body_file_stdin(
@@ -3213,7 +3210,8 @@ def test_pr_review_comment_supports_body_file_stdin(
 ) -> None:
     responder = GhResponder()
     monkeypatch.setattr(github_api.subprocess, "run", responder.run)
-    monkeypatch.setattr(sys, "stdin", _FakeStdin("stdin review comment\nwith second line\n"))
+    body = "stdin review comment\n\n```suggestion\nnew_api_call()\n```\n\nAdditional context.\n"
+    monkeypatch.setattr(sys, "stdin", _FakeStdin(body))
 
     code = cli.run(
         [
@@ -3239,10 +3237,10 @@ def test_pr_review_comment_supports_body_file_stdin(
     assert "status: commented" in out
     graphql_calls = [call for call in responder.calls if call[:3] == ["gh", "api", "graphql"]]
     review_call = next(call for call in graphql_calls if "addPullRequestReviewThread" in _extract_form(call, "query"))
-    assert _extract_field(review_call, "body") == "stdin review comment\nwith second line\n"
+    assert _extract_field(review_call, "body") == body
 
 
-def test_pr_review_suggest_supports_body_file(
+def test_pr_review_comment_preserves_suggestion_body_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -3250,12 +3248,13 @@ def test_pr_review_suggest_supports_body_file(
     responder = GhResponder()
     monkeypatch.setattr(github_api.subprocess, "run", responder.run)
     body_file = tmp_path / "suggestion.md"
-    body_file.write_text("nits from file\n", encoding="utf-8")
+    body = "nits from file\n\n```suggestion\n  new_api_call()\n```\n\nAdditional context.\n"
+    body_file.write_text(body, encoding="utf-8")
 
     code = cli.run(
         [
             "pr",
-            "review-suggest",
+            "review-comment",
             "--path",
             "python/test_file.py",
             "--line",
@@ -3264,8 +3263,6 @@ def test_pr_review_suggest_supports_body_file(
             "RIGHT",
             "--body-file",
             str(body_file),
-            "--suggestion",
-            "new_api_call()",
             "--pr",
             "77928",
             "--repo",
@@ -3275,10 +3272,10 @@ def test_pr_review_suggest_supports_body_file(
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "status: suggested" in out
+    assert "status: commented" in out
     graphql_calls = [call for call in responder.calls if call[:3] == ["gh", "api", "graphql"]]
     review_call = next(call for call in graphql_calls if "addPullRequestReviewThread" in _extract_form(call, "query"))
-    assert _extract_field(review_call, "body") == "nits from file\n\n```suggestion\nnew_api_call()\n```"
+    assert _extract_field(review_call, "body") == body
 
 
 def test_pr_thread_reply_rejects_body_and_body_file_together(
@@ -3646,117 +3643,6 @@ def test_pr_comment_edit_rejects_body_and_body_file_together(
 
     err = capsys.readouterr().err
     assert "argument -F/--body-file: not allowed with argument --body" in err
-
-
-def test_pr_review_suggest_supports_suggestion_file_stdin(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    responder = GhResponder()
-    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
-    reason_file = tmp_path / "reason.md"
-    reason_file.write_text("nits from file\n", encoding="utf-8")
-    monkeypatch.setattr(sys, "stdin", _FakeStdin("replacement_from_stdin()\nsecond_line()\n"))
-
-    code = cli.run(
-        [
-            "pr",
-            "review-suggest",
-            "--path",
-            "python/test_file.py",
-            "--line",
-            "20",
-            "--side",
-            "RIGHT",
-            "--body-file",
-            str(reason_file),
-            "--suggestion-file",
-            "-",
-            "--pr",
-            "77928",
-            "--repo",
-            "PaddlePaddle/Paddle",
-        ]
-    )
-
-    assert code == 0
-    out = capsys.readouterr().out
-    assert "status: suggested" in out
-    graphql_calls = [call for call in responder.calls if call[:3] == ["gh", "api", "graphql"]]
-    review_call = next(call for call in graphql_calls if "addPullRequestReviewThread" in _extract_form(call, "query"))
-    assert (
-        _extract_field(review_call, "body")
-        == "nits from file\n\n```suggestion\nreplacement_from_stdin()\nsecond_line()\n```"
-    )
-
-
-def test_pr_review_suggest_rejects_suggestion_and_suggestion_file_together(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    suggestion_file = tmp_path / "replacement.txt"
-    suggestion_file.write_text("replacement_from_file()\n", encoding="utf-8")
-
-    try:
-        cli.run(
-            [
-                "pr",
-                "review-suggest",
-                "--path",
-                "python/test_file.py",
-                "--line",
-                "20",
-                "--side",
-                "RIGHT",
-                "--suggestion",
-                "inline_replacement()",
-                "--suggestion-file",
-                str(suggestion_file),
-            ]
-        )
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:  # pragma: no cover - defensive assertion
-        raise AssertionError("expected argparse to reject --suggestion with --suggestion-file")
-
-    err = capsys.readouterr().err
-    assert "argument --suggestion-file: not allowed with argument --suggestion" in err
-
-
-def test_pr_review_suggest_rejects_dual_stdin_inputs(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    responder = GhResponder()
-    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
-    monkeypatch.setattr(sys, "stdin", _FakeStdin("shared stdin\n"))
-
-    code = cli.run(
-        [
-            "pr",
-            "review-suggest",
-            "--path",
-            "python/test_file.py",
-            "--line",
-            "20",
-            "--side",
-            "RIGHT",
-            "--body-file",
-            "-",
-            "--suggestion-file",
-            "-",
-            "--pr",
-            "77928",
-            "--repo",
-            "PaddlePaddle/Paddle",
-        ]
-    )
-
-    assert code == 1
-    err = capsys.readouterr().err
-    assert "`--body-file -` cannot be combined with `--suggestion-file -`" in err
-    assert not any(call[:3] == ["gh", "api", "graphql"] for call in responder.calls)
 
 
 def _extract_form(cmd: list[str], key: str) -> str:
