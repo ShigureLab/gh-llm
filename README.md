@@ -27,7 +27,7 @@ Structured GitHub context for LLMs — read PRs, issues, and repos the way GitHu
 
 ## Requirements
 
-- Python `3.14+` (CI covers `3.14`, `3.15`, and free-threaded `3.15t`)
+- Python `3.14+`
 - `gh` installed and authenticated (`gh auth status`)
 
 ## Install

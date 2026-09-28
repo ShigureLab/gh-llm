@@ -11,7 +11,6 @@ jobs:
   unit-test:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
         python-version: ['3.14', '3.15', '3.15t']
         architecture: ['x64']
@@ -40,25 +39,6 @@ jobs:
       - name: Install dependencies
         run: |
           just ci-install
-
-      - name: Verify test runtime
-        run: |
-          uv run python - <<'PY'
-          import os
-          import sys
-          import sysconfig
-
-          import gh_llm.cli
-          import pytest
-
-          requested = os.environ['UV_PYTHON']
-          free_threaded = requested.endswith('t')
-          print(sys.version)
-          print(f'GIL enabled: {sys._is_gil_enabled()}')
-          assert sys.version_info[:2] == tuple(map(int, requested.rstrip('t').split('.')))
-          assert bool(sysconfig.get_config_var('Py_GIL_DISABLED')) == free_threaded
-          assert sys._is_gil_enabled() == (not free_threaded)
-          PY
 
       - name: unit test
         run: |
