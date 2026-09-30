@@ -77,6 +77,8 @@ def build_context_from_meta(
         rebase_merge_allowed=meta.rebase_merge_allowed,
         co_author_trailers=meta.co_author_trailers,
         conflict_files=meta.conflict_files,
+        stack=meta.stack,
+        stack_supported=meta.stack_supported,
         forward_after_by_page=({1: None} if timeline_loaded and not timeline_filtered else {}),
         backward_before_by_page=({resolved_total_pages: None} if timeline_loaded and not timeline_filtered else {}),
         filtered_pages=({} if filtered_pages is None else filtered_pages),

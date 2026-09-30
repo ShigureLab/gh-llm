@@ -20,7 +20,7 @@ from gh_llm.commands.options import (
 )
 from gh_llm.github_api import GitHubClient
 from gh_llm.invocation import display_command_with
-from gh_llm.models import PullRequestDiffPage
+from gh_llm.models import CheckResults, PullRequestDiffPage
 from gh_llm.pager import DEFAULT_PAGE_SIZE, TimelinePager, build_context_from_meta
 from gh_llm.pr_body import build_pull_request_body_scaffold, parse_required_sections
 from gh_llm.render import (
@@ -37,6 +37,7 @@ from gh_llm.render import (
     render_page,
     render_pr_actions,
 )
+from gh_llm.stack_render import render_stack_section
 
 if TYPE_CHECKING:
     from gh_llm.models import (
@@ -67,6 +68,7 @@ class _ShowOptions:
     checks: bool = True
     actions: bool = True
     mergeability: bool = True
+    stack: bool = True
 
 
 def register_pr_parser(subparsers: Any) -> None:
@@ -84,7 +86,7 @@ def register_pr_parser(subparsers: Any) -> None:
         "--show",
         action="append",
         default=[],
-        help="show regions: meta, description, timeline, checks, actions, mergeability, all (comma-separated or repeatable)",
+        help="show regions: meta, description, timeline, checks, actions, mergeability, stack, all (comma-separated or repeatable)",
     )
     view_parser.add_argument(
         "--expand",
@@ -351,6 +353,8 @@ def cmd_pr_view(args: Any) -> int:
     pager = TimelinePager(client)
 
     meta = _resolve_pr_meta(client=client, args=args)
+    if show.stack or show.mergeability:
+        meta = client.fetch_pull_request_stack(meta)
     context = build_context_from_meta(
         meta=meta,
         page_size=page_size,
@@ -388,6 +392,8 @@ def cmd_pr_view(args: Any) -> int:
 
     if show.meta:
         print_block(render_frontmatter(context))
+    if show.stack:
+        print_block(render_stack_section(context, show_absent=bool(getattr(args, "show", []))))
     if show.description:
         print_block(render_description(context))
     if show.timeline:
@@ -431,9 +437,9 @@ def cmd_pr_view(args: Any) -> int:
 
     if show.timeline:
         print_block(render_expand_hints(context, shown_pages))
-    checks: list[Any] = []
+    checks = CheckResults(())
     if show.checks or show.mergeability:
-        checks = client.fetch_checks(meta.ref) if meta.state == "OPEN" else []
+        checks = client.fetch_checks(meta.ref, meta=meta) if meta.state == "OPEN" else CheckResults(())
     if show.checks:
         print_block(
             render_checks_section(
@@ -452,7 +458,13 @@ def cmd_pr_view(args: Any) -> int:
             )
         )
     if show.mergeability:
-        print_block(render_mergeability_section(context=context, checks=checks))
+        print_block(
+            render_mergeability_section(
+                context=context,
+                checks=checks.items,
+                requirements_known=checks.requirements_known if checks.required_base_ref else None,
+            )
+        )
 
     return 0
 
@@ -629,7 +641,7 @@ def cmd_pr_checks(args: Any) -> int:
     client = GitHubClient()
     meta = _resolve_pr_meta(client=client, args=args)
     context = build_context_from_meta(meta=meta, page_size=DEFAULT_PAGE_SIZE)
-    checks = client.fetch_checks(meta.ref) if meta.state == "OPEN" else []
+    checks = client.fetch_checks(meta.ref, meta=meta) if meta.state == "OPEN" or args.all else CheckResults(())
     for line in render_checks_section(
         context=context,
         checks=checks,
@@ -838,6 +850,13 @@ def cmd_pr_review_start(args: Any) -> int:
     print(f"PR: {meta.ref.number} ({repo})")
     if pinned_head is not None:
         print(f"Head snapshot: {pinned_head}")
+    if meta.stack:
+        print(
+            f"Stack #{meta.stack.number}: layer {meta.stack.position}/{meta.stack.size}; target: {meta.stack.base_ref_name}"
+        )
+        print(
+            f"Diff scope: this PR only ({meta.base_ref_name} → {meta.head_ref_name}); review coordinates are local to this PR."
+        )
     print(f"Files changed: {diff_page.total_files}")
     if path_filter is not None and focused_file is not None:
         print(f"Focused file: {focused_file.path} ({file_start}/{diff_page.total_files})")
@@ -1204,11 +1223,12 @@ def _parse_show_options(*, raw_values: list[str]) -> _ShowOptions:
         "actions": {"actions"},
         "mergeability": {"mergeability"},
         "merge": {"mergeability"},
+        "stack": {"stack"},
         "summary": {"meta", "description"},
-        "all": {"meta", "description", "timeline", "checks", "actions", "mergeability"},
-        "*": {"meta", "description", "timeline", "checks", "actions", "mergeability"},
+        "all": {"meta", "description", "timeline", "checks", "actions", "mergeability", "stack"},
+        "*": {"meta", "description", "timeline", "checks", "actions", "mergeability", "stack"},
     }
-    valid_values = ["meta", "description", "timeline", "checks", "actions", "mergeability", "summary", "all"]
+    valid_values = ["meta", "description", "timeline", "checks", "actions", "mergeability", "stack", "summary", "all"]
     alias_values = [alias for alias in aliases if alias not in valid_values and alias != "*"]
 
     for raw in raw_values:
@@ -1233,6 +1253,7 @@ def _parse_show_options(*, raw_values: list[str]) -> _ShowOptions:
         checks=("checks" in selected),
         actions=("actions" in selected),
         mergeability=("mergeability" in selected),
+        stack=("stack" in selected),
     )
 
 

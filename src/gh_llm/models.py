@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -10,6 +10,70 @@ class PullRequestRef:
     owner: str
     name: str
     number: int
+
+
+@dataclass(frozen=True)
+class StackEntry:
+    position: int
+    number: int
+    title: str
+    state: str
+    is_draft: bool = False
+    head_ref_name: str | None = None
+    head_ref_oid: str | None = None
+    merge_state_status: str | None = None
+    mergeable: str | None = None
+    review_decision: str | None = None
+    checks_state: str | None = None
+
+
+@dataclass(frozen=True)
+class PullRequestStack:
+    number: int
+    position: int
+    size: int
+    base_ref_name: str
+    entries: tuple[StackEntry, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return (
+            1 <= self.position <= self.size
+            and len(self.entries) == self.size
+            and len({entry.number for entry in self.entries}) == self.size
+            and {entry.position for entry in self.entries} == set(range(1, self.size + 1))
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {**asdict(self), "entries": [asdict(entry) for entry in self.entries]}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, object]) -> PullRequestStack:
+        entries: list[StackEntry] = []
+        for raw in _as_list(value.get("entries")):
+            entry = _ensure_dict(raw)
+            entries.append(
+                StackEntry(
+                    position=_as_int(entry.get("position"), 0),
+                    number=_as_int(entry.get("number"), 0),
+                    title=_as_str(entry.get("title"), ""),
+                    state=_as_str(entry.get("state"), "UNKNOWN"),
+                    is_draft=bool(entry.get("is_draft")),
+                    head_ref_name=_as_str_optional(entry.get("head_ref_name")),
+                    head_ref_oid=_as_str_optional(entry.get("head_ref_oid")),
+                    merge_state_status=_as_str_optional(entry.get("merge_state_status")),
+                    mergeable=_as_str_optional(entry.get("mergeable")),
+                    review_decision=_as_str_optional(entry.get("review_decision")),
+                    checks_state=_as_str_optional(entry.get("checks_state")),
+                )
+            )
+        return cls(
+            number=_as_int(value.get("number"), 0),
+            position=_as_int(value.get("position"), 0),
+            size=_as_int(value.get("size"), 0),
+            base_ref_name=_as_str(value.get("base_ref_name"), ""),
+            entries=tuple(entries),
+        )
 
 
 @dataclass(frozen=True)
@@ -48,6 +112,8 @@ class PullRequestMeta:
     rebase_merge_allowed: bool | None = None
     co_author_trailers: tuple[str, ...] = ()
     conflict_files: tuple[str, ...] = ()
+    stack: PullRequestStack | None = None
+    stack_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -107,6 +173,17 @@ class CheckItem:
     details_url: str | None = None
     run_id: int | None = None
     job_id: int | None = None
+    required: bool | None = None
+    workflow: str | None = None
+    app_id: int | None = None
+
+
+@dataclass(frozen=True)
+class CheckResults:
+    items: tuple[CheckItem, ...]
+    head_oid: str | None = None
+    required_base_ref: str | None = None
+    requirements_known: bool = False
 
 
 @dataclass(frozen=True)
@@ -240,6 +317,8 @@ class TimelineContext:
     rebase_merge_allowed: bool | None = None
     co_author_trailers: tuple[str, ...] = ()
     conflict_files: tuple[str, ...] = ()
+    stack: PullRequestStack | None = None
+    stack_supported: bool = True
     forward_after_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
     backward_before_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
     filtered_pages: dict[int, TimelinePage] = field(default_factory=lambda: cast("dict[int, TimelinePage]", {}))
@@ -291,6 +370,8 @@ class TimelineContext:
             "rebase_merge_allowed": self.rebase_merge_allowed,
             "co_author_trailers": list(self.co_author_trailers),
             "conflict_files": list(self.conflict_files),
+            "stack": self.stack.to_dict() if self.stack is not None else None,
+            "stack_supported": self.stack_supported,
             "forward_after_by_page": {str(k): v for k, v in self.forward_after_by_page.items()},
             "backward_before_by_page": {str(k): v for k, v in self.backward_before_by_page.items()},
         }
@@ -375,6 +456,10 @@ class TimelineContext:
             ),
             co_author_trailers=tuple(_as_str(item, "") for item in _as_list(value.get("co_author_trailers")) if item),
             conflict_files=tuple(_as_str(item, "") for item in _as_list(value.get("conflict_files")) if item),
+            stack=(
+                PullRequestStack.from_dict(_ensure_dict(value["stack"])) if value.get("stack") is not None else None
+            ),
+            stack_supported=bool(value.get("stack_supported", True)),
             forward_after_by_page={
                 int(k): None if v is None else str(v)
                 for k, v in _ensure_dict(value.get("forward_after_by_page")).items()

@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, cast
@@ -15,16 +15,19 @@ from gh_llm.diagnostics import GhCommandError, looks_like_transport_error
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.models import (
     CheckItem,
+    CheckResults,
     PageInfo,
     PullRequestDiffFile,
     PullRequestDiffPage,
     PullRequestMeta,
     PullRequestRef,
+    PullRequestStack,
     RepoBranchProtection,
     RepoDocument,
     RepoPreflight,
     ReviewCommentSummary,
     ReviewThreadSummary,
+    StackEntry,
     TimelineEvent,
     TimelinePage,
 )
@@ -58,7 +61,7 @@ FORWARD_TIMELINE_QUERY = """
 query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$after:String){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
-      timelineItems(first:$pageSize,after:$after,itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_DISMISSED_EVENT,CROSS_REFERENCED_EVENT,REFERENCED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,HEAD_REF_FORCE_PUSHED_EVENT,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT]){
+      timelineItems(first:$pageSize,after:$after,itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_DISMISSED_EVENT,CROSS_REFERENCED_EVENT,REFERENCED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,BASE_REF_CHANGED_EVENT,HEAD_REF_FORCE_PUSHED_EVENT,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT]){
         totalCount
         pageInfo{hasNextPage hasPreviousPage startCursor endCursor}
         nodes{
@@ -138,6 +141,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$after:String){
           ... on LabeledEvent{ id createdAt actor{login ... on User{name}} label{name} }
           ... on UnlabeledEvent{ id createdAt actor{login ... on User{name}} label{name} }
           ... on RenamedTitleEvent{ id createdAt actor{login ... on User{name}} previousTitle currentTitle }
+          ... on BaseRefChangedEvent{ id createdAt actor{login ... on User{name}} previousRefName currentRefName }
           ... on HeadRefForcePushedEvent{
             id
             createdAt
@@ -269,7 +273,7 @@ BACKWARD_TIMELINE_QUERY = """
 query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$before:String){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
-      timelineItems(last:$pageSize,before:$before,itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_DISMISSED_EVENT,CROSS_REFERENCED_EVENT,REFERENCED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,HEAD_REF_FORCE_PUSHED_EVENT,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT]){
+      timelineItems(last:$pageSize,before:$before,itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_DISMISSED_EVENT,CROSS_REFERENCED_EVENT,REFERENCED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,BASE_REF_CHANGED_EVENT,HEAD_REF_FORCE_PUSHED_EVENT,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT]){
         totalCount
         pageInfo{hasNextPage hasPreviousPage startCursor endCursor}
         nodes{
@@ -349,6 +353,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$before:String){
           ... on LabeledEvent{ id createdAt actor{login ... on User{name}} label{name} }
           ... on UnlabeledEvent{ id createdAt actor{login ... on User{name}} label{name} }
           ... on RenamedTitleEvent{ id createdAt actor{login ... on User{name}} previousTitle currentTitle }
+          ... on BaseRefChangedEvent{ id createdAt actor{login ... on User{name}} previousRefName currentRefName }
           ... on HeadRefForcePushedEvent{
             id
             createdAt
@@ -512,14 +517,17 @@ query($owner:String!,$name:String!,$number:Int!,$after:String){
 """.strip()
 
 CHECKS_QUERY = """
-query($owner:String!,$name:String!,$number:Int!){
+query($owner:String!,$name:String!,$number:Int!,$after:String){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
+      headRefOid
       commits(last:1){
         nodes{
           commit{
+            oid
             statusCheckRollup{
-              contexts(first:100){
+              contexts(first:100,after:$after){
+                pageInfo{hasNextPage endCursor}
                 nodes{
                   __typename
                   ... on CheckRun{
@@ -528,12 +536,19 @@ query($owner:String!,$name:String!,$number:Int!){
                     conclusion
                     detailsUrl
                     databaseId
+                    isRequired(pullRequestNumber:$number)
+                    checkSuite{
+                      databaseId createdAt
+                      app{databaseId slug}
+                      workflowRun{databaseId event workflow{databaseId name}}
+                    }
                   }
                   ... on StatusContext{
                     context
                     state
                     targetUrl
                     description
+                    isRequired(pullRequestNumber:$number)
                   }
                 }
               }
@@ -657,6 +672,33 @@ query($id:ID!){
 }
 """.strip()
 
+STACK_MEMBERSHIP_FIELDS = "stack{number size baseRefName} stackEntry{position}"
+
+STACK_ENTRIES_QUERY = """
+query($owner:String!,$name:String!,$number:Int!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      headRefOid
+      stackEntry{position}
+      stack{
+        number size baseRefName
+        entries(first:100,after:$after){
+          pageInfo{hasNextPage endCursor}
+          nodes{
+            position
+            pullRequest{
+              number title state isDraft headRefName headRefOid
+              mergeStateStatus mergeable reviewDecision
+              statusCheckRollup{state}
+            }
+          }
+        }
+      }
+    }
+  }
+}
+""".strip()
+
 PULL_REQUEST_ACTIONS_META_QUERY = """
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
@@ -666,6 +708,7 @@ query($owner:String!,$name:String!,$number:Int!){
     pullRequest(number:$number){
       id
       merged
+      STACK_MEMBERSHIP_FIELDS
       reviewDecision
       baseRefName
       baseRefOid
@@ -689,7 +732,7 @@ query($owner:String!,$name:String!,$number:Int!){
     }
   }
 }
-""".strip()
+""".strip().replace("STACK_MEMBERSHIP_FIELDS", STACK_MEMBERSHIP_FIELDS)
 
 REPOSITORY_REF_EXISTS_QUERY = """
 query($owner:String!,$name:String!,$qualifiedName:String!){
@@ -700,6 +743,80 @@ query($owner:String!,$name:String!,$qualifiedName:String!){
   }
 }
 """.strip()
+
+
+def _parse_stack_membership(pr: dict[str, object]) -> PullRequestStack | None:
+    stack = _as_dict_optional(pr.get("stack"))
+    if stack is None:
+        return None
+    entry = _as_dict(pr.get("stackEntry"), context="stackEntry")
+    return PullRequestStack(
+        number=_as_int(stack.get("number"), context="stack number"),
+        position=_as_int(entry.get("position"), context="stack position"),
+        size=_as_int(stack.get("size"), context="stack size"),
+        base_ref_name=_as_optional_str(stack.get("baseRefName")) or "",
+    )
+
+
+def _latest_check_runs(nodes: list[dict[str, object]]) -> list[dict[str, object]]:
+    latest: dict[tuple[int, int, str], tuple[str, int]] = {}
+
+    def identity(node: dict[str, object]) -> tuple[tuple[int, int, str], tuple[str, int]] | None:
+        suite = _as_dict_optional(node.get("checkSuite")) or {}
+        app = _as_dict_optional(suite.get("app")) or {}
+        run = _as_dict_optional(suite.get("workflowRun")) or {}
+        workflow = _as_dict_optional(run.get("workflow")) or {}
+        workflow_id = _as_optional_int(workflow.get("databaseId"))
+        suite_id = _as_optional_int(suite.get("databaseId"))
+        if workflow_id is None or suite_id is None:
+            return None
+        return (
+            (_as_optional_int(app.get("databaseId")) or 0, workflow_id, _as_optional_str(run.get("event")) or ""),
+            (_as_optional_str(suite.get("createdAt")) or "", suite_id),
+        )
+
+    for node in nodes:
+        value = identity(node)
+        if value is not None:
+            key, order = value
+            latest[key] = max(latest.get(key, order), order)
+    return [node for node in nodes if (value := identity(node)) is None or latest[value[0]] == value[1]]
+
+
+def _parse_check_item(node: dict[str, object]) -> CheckItem | None:
+    required = _as_optional_bool(node.get("isRequired"))
+    if node.get("__typename") == "CheckRun":
+        status = _as_optional_str(node.get("status")) or "UNKNOWN"
+        conclusion = _as_optional_str(node.get("conclusion"))
+        details_url = _as_optional_str(node.get("detailsUrl"))
+        run_id, job_id = _extract_actions_run_and_job_ids(details_url)
+        suite = _as_dict_optional(node.get("checkSuite")) or {}
+        app = _as_dict_optional(suite.get("app")) or {}
+        run = _as_dict_optional(suite.get("workflowRun")) or {}
+        workflow = _as_dict_optional(run.get("workflow")) or {}
+        return CheckItem(
+            name=(_as_optional_str(node.get("name")) or "").strip() or "(unnamed check run)",
+            kind="check-run",
+            status=f"{status}/{conclusion or 'NONE'}",
+            passed=_is_check_run_passed(status=status, conclusion=conclusion),
+            details_url=details_url,
+            run_id=_as_optional_int(run.get("databaseId")) or run_id,
+            job_id=job_id,
+            required=required,
+            workflow=_as_optional_str(workflow.get("name")),
+            app_id=_as_optional_int(app.get("databaseId")),
+        )
+    if node.get("__typename") == "StatusContext":
+        state = _as_optional_str(node.get("state")) or "UNKNOWN"
+        return CheckItem(
+            name=(_as_optional_str(node.get("context")) or "").strip() or "(unnamed status)",
+            kind="status-context",
+            status=state,
+            passed=state == "SUCCESS",
+            details_url=_as_optional_str(node.get("targetUrl")),
+            required=required,
+        )
+    return None
 
 
 class GitHubClient:
@@ -822,7 +939,69 @@ class GitHubClient:
             rebase_merge_allowed=rebase_merge_allowed,
             co_author_trailers=co_author_trailers,
             conflict_files=(),
+            stack=_parse_stack_membership(pr_meta),
+            stack_supported=pr_meta.get("stack_supported") is not False,
         )
+
+    def fetch_pull_request_stack(self, meta: PullRequestMeta) -> PullRequestMeta:
+        stack = meta.stack
+        if stack is None:
+            return meta
+        entries: list[StackEntry] = []
+        after: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            variables: dict[str, str | int] = {
+                "owner": meta.ref.owner,
+                "name": meta.ref.name,
+                "number": meta.ref.number,
+            }
+            if after is not None:
+                variables["after"] = after
+            payload = _run_graphql_payload(STACK_ENTRIES_QUERY, variables)
+            repo = _as_dict(_as_dict(payload.get("data"), context="data").get("repository"), context="repository")
+            pr = _as_dict(repo.get("pullRequest"), context="pullRequest")
+            if _parse_stack_membership(pr) != replace(stack, entries=()) or pr.get("headRefOid") != meta.head_ref_oid:
+                raise RuntimeError("PR head or stack membership changed while loading; rerun the command")
+            stack_data = _as_dict(pr.get("stack"), context="stack")
+            connection = _as_dict(stack_data.get("entries"), context="stack entries")
+            for raw in _as_list(connection.get("nodes")):
+                if raw is None:
+                    continue
+                node = _as_dict(raw, context="stack entry")
+                member = _as_dict_optional(node.get("pullRequest"))
+                if member is None:
+                    continue
+                if member.get("number") == meta.ref.number and (
+                    node.get("position") != stack.position
+                    or member.get("headRefOid") != meta.head_ref_oid
+                    or member.get("state") != meta.state
+                ):
+                    raise RuntimeError("PR state or stack position changed while loading; rerun the command")
+                rollup = _as_dict_optional(member.get("statusCheckRollup")) or {}
+                entries.append(
+                    StackEntry(
+                        position=_as_int(node.get("position"), context="stack position"),
+                        number=_as_int(member.get("number"), context="PR number"),
+                        title=_as_optional_str(member.get("title")) or "",
+                        state=_as_optional_str(member.get("state")) or "UNKNOWN",
+                        is_draft=bool(member.get("isDraft")),
+                        head_ref_name=_as_optional_str(member.get("headRefName")),
+                        head_ref_oid=_as_optional_str(member.get("headRefOid")),
+                        merge_state_status=_as_optional_str(member.get("mergeStateStatus")),
+                        mergeable=_as_optional_str(member.get("mergeable")),
+                        review_decision=_as_optional_str(member.get("reviewDecision")),
+                        checks_state=_as_optional_str(rollup.get("state")),
+                    )
+                )
+            page = _as_dict(connection.get("pageInfo"), context="stack pageInfo")
+            if not page.get("hasNextPage"):
+                break
+            after = _as_optional_str(page.get("endCursor"))
+            if not after or after in seen_cursors:
+                raise RuntimeError("stack pagination did not advance")
+            seen_cursors.add(after)
+        return replace(meta, stack=replace(stack, entries=tuple(sorted(entries, key=lambda entry: entry.position))))
 
     def resolve_issue(self, selector: str | None, repo: str | None) -> PullRequestMeta:
         fields = [
@@ -1536,64 +1715,128 @@ mutation($id:ID!,$body:String!){
         login = _as_optional_str(payload.get("login"))
         return login or ""
 
-    def fetch_checks(self, ref: PullRequestRef) -> list[CheckItem]:
-        payload = _run_graphql_payload(
-            CHECKS_QUERY,
-            {"owner": ref.owner, "name": ref.name, "number": ref.number},
-        )
-        data_obj = _as_dict(payload.get("data"), context="graphql data")
-        repo_obj = _as_dict(data_obj.get("repository"), context="repository")
-        pr_obj = _as_dict(repo_obj.get("pullRequest"), context="pullRequest")
-        commits_obj = _as_dict(pr_obj.get("commits"), context="commits")
-        nodes = _as_list(commits_obj.get("nodes"))
-        if not nodes:
-            return []
-        head = _as_dict(nodes[0], context="commit node")
-        commit_obj = _as_dict(head.get("commit"), context="commit")
-        rollup_obj = _as_dict_optional(commit_obj.get("statusCheckRollup"))
-        if rollup_obj is None:
-            return []
-        contexts_obj = _as_dict_optional(rollup_obj.get("contexts"))
-        if contexts_obj is None:
-            return []
+    def fetch_checks(self, ref: PullRequestRef, *, meta: PullRequestMeta | None = None) -> CheckResults:
+        nodes: list[dict[str, object]] = []
+        head_oid = meta.head_ref_oid if meta else None
+        after: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            variables: dict[str, str | int] = {"owner": ref.owner, "name": ref.name, "number": ref.number}
+            if after is not None:
+                variables["after"] = after
+            payload = _run_graphql_payload(CHECKS_QUERY, variables)
+            data = _as_dict(payload.get("data"), context="graphql data")
+            repo = _as_dict(data.get("repository"), context="repository")
+            pr = _as_dict(repo.get("pullRequest"), context="pullRequest")
+            current_head = _as_optional_str(pr.get("headRefOid"))
+            if head_oid and current_head and head_oid != current_head:
+                raise RuntimeError("PR head changed while loading checks; rerun the command")
+            head_oid = current_head or head_oid
+            commits = _as_dict(pr.get("commits"), context="commits")
+            commits_nodes = _as_list(commits.get("nodes"))
+            if not commits_nodes:
+                break
+            commit = _as_dict(_as_dict(commits_nodes[0], context="commit node").get("commit"), context="commit")
+            commit_oid = _as_optional_str(commit.get("oid"))
+            if head_oid and commit_oid and head_oid != commit_oid:
+                raise RuntimeError("checks do not match the PR head; rerun the command")
+            rollup = _as_dict_optional(commit.get("statusCheckRollup")) or {}
+            connection = _as_dict_optional(rollup.get("contexts")) or {}
+            nodes.extend(_as_dict(raw, context="check context") for raw in _as_list(connection.get("nodes")))
+            page = _as_dict_optional(connection.get("pageInfo")) or {}
+            if not page.get("hasNextPage"):
+                break
+            after = _as_optional_str(page.get("endCursor"))
+            if not after or after in seen_cursors:
+                raise RuntimeError("checks pagination did not advance")
+            seen_cursors.add(after)
 
-        items: list[CheckItem] = []
-        for raw in _as_list(contexts_obj.get("nodes")):
-            node = _as_dict(raw, context="check context")
-            typename = _as_optional_str(node.get("__typename")) or ""
-            if typename == "CheckRun":
-                name = (_as_optional_str(node.get("name")) or "").strip() or "(unnamed check run)"
-                status = _as_optional_str(node.get("status")) or "UNKNOWN"
-                conclusion = _as_optional_str(node.get("conclusion"))
-                label = f"{status}/{(conclusion or 'NONE')}"
-                details_url = _as_optional_str(node.get("detailsUrl"))
-                run_id, job_id = _extract_actions_run_and_job_ids(details_url)
-                items.append(
-                    CheckItem(
-                        name=name,
-                        kind="check-run",
-                        status=label,
-                        passed=_is_check_run_passed(status=status, conclusion=conclusion),
-                        details_url=details_url,
-                        run_id=run_id,
-                        job_id=job_id,
-                    )
+        items = [_parse_check_item(node) for node in _latest_check_runs(nodes)]
+        checks = [item for item in items if item is not None]
+        if meta and meta.state != "OPEN":
+            checks = [replace(item, required=None) for item in checks]
+        required_base = meta.stack.base_ref_name if meta and meta.stack and meta.state == "OPEN" else None
+        requirements_known = False
+        if required_base:
+            requirements, requirements_known = self._fetch_stack_required_checks(ref, required_base)
+
+            # A pinned app must match too; another integration's same-named success cannot satisfy it.
+            def matches(item: CheckItem, name: str, app_id: int | None) -> bool:
+                return item.name == name and (app_id is None or item.app_id == app_id)
+
+            checks = [
+                replace(
+                    item,
+                    required=(
+                        True
+                        if any(matches(item, name, app_id) for name, app_id in requirements)
+                        else (False if requirements_known else (True if item.required else None))
+                    ),
                 )
-                continue
-            if typename == "StatusContext":
-                name = (_as_optional_str(node.get("context")) or "").strip() or "(unnamed status)"
-                state = _as_optional_str(node.get("state")) or "UNKNOWN"
-                items.append(
-                    CheckItem(
-                        name=name,
-                        kind="status-context",
-                        status=state,
-                        passed=(state == "SUCCESS"),
-                        details_url=_as_optional_str(node.get("targetUrl")),
-                        run_id=None,
+                for item in checks
+            ]
+            for name, app_id in sorted(requirements, key=lambda requirement: (requirement[0], requirement[1] or 0)):
+                if not any(matches(item, name, app_id) for item in checks):
+                    checks.append(
+                        CheckItem(
+                            name=name,
+                            kind="required-context",
+                            status="EXPECTED",
+                            passed=False,
+                            required=True,
+                            app_id=app_id,
+                        )
                     )
-                )
-        return items
+        return CheckResults(tuple(checks), head_oid, required_base, requirements_known)
+
+    def _fetch_stack_required_checks(
+        self, ref: PullRequestRef, branch: str
+    ) -> tuple[set[tuple[str, int | None]], bool]:
+        prefix = f"repos/{ref.owner}/{ref.name}"
+        encoded_branch = quote(branch, safe="")
+        required: set[tuple[str, int | None]] = set()
+        known = True
+        try:
+            payload = _run_command_json(["gh", "api", f"{prefix}/branches/{encoded_branch}"])
+            protection = _as_dict_optional(payload.get("protection")) or {}
+            status = _as_dict_optional(protection.get("required_status_checks")) or {}
+            checks = _as_list(status.get("checks"))
+            for raw in checks:
+                check = _as_dict(raw, context="required status check")
+                name = _as_optional_str(check.get("context"))
+                app_id = _as_optional_int(check.get("app_id"))
+                if name:
+                    required.add((name, app_id if app_id is not None and app_id > 0 else None))
+            # Older servers expose only contexts.
+            for raw in _as_list(status.get("contexts")):
+                name = _as_optional_str(raw)
+                if name and not any(context == name for context, _ in required):
+                    required.add((name, None))
+        except GhCommandError as error:
+            if not re.search(r"HTTP (?:403|404)", str(error)):
+                raise
+            known = False
+        try:
+            pages = _run_command_json_any(
+                ["gh", "api", f"{prefix}/rules/branches/{encoded_branch}?per_page=100", "--paginate", "--slurp"]
+            )
+            for page in _as_list(pages):
+                for raw in _as_list(page):
+                    rule = _as_dict(raw, context="branch rule")
+                    if rule.get("type") != "required_status_checks":
+                        continue
+                    params = _as_dict_optional(rule.get("parameters")) or {}
+                    for raw_check in _as_list(params.get("required_status_checks")):
+                        check = _as_dict(raw_check, context="required status check")
+                        name = _as_optional_str(check.get("context"))
+                        app_id = _as_optional_int(check.get("integration_id"))
+                        if name:
+                            required.add((name, app_id if app_id is not None and app_id > 0 else None))
+        except GhCommandError as error:
+            if not re.search(r"HTTP (?:403|404)", str(error)):
+                raise
+            known = False
+        return required, known
 
     def fetch_pr_diff(self, selector: str | None, repo: str | None) -> str:
         cmd = ["gh", "pr", "diff"]
@@ -1932,14 +2175,24 @@ mutation($id:ID!,$body:String!){
         return pr_id
 
     def _fetch_pull_request_actions_meta(self, ref: PullRequestRef) -> dict[str, object]:
-        payload = _run_graphql_payload(
-            PULL_REQUEST_ACTIONS_META_QUERY,
-            {"owner": ref.owner, "name": ref.name, "number": ref.number},
-        )
+        variables = {"owner": ref.owner, "name": ref.name, "number": ref.number}
+        stack_supported = True
+        try:
+            payload = _run_graphql_payload(PULL_REQUEST_ACTIONS_META_QUERY, variables)
+        except GhCommandError as error:
+            if not re.search(
+                r"Field ['\"](?:stack|stackEntry)['\"] doesn't exist on type ['\"]PullRequest['\"]", str(error)
+            ):
+                raise
+            stack_supported = False
+            payload = _run_graphql_payload(
+                PULL_REQUEST_ACTIONS_META_QUERY.replace(STACK_MEMBERSHIP_FIELDS, ""), variables
+            )
         data_obj = _as_dict(payload.get("data"), context="graphql data")
         repo_obj = _as_dict(data_obj.get("repository"), context="repository")
         pr_obj = _as_dict(repo_obj.get("pullRequest"), context="pullRequest")
         out: dict[str, object] = dict(pr_obj)
+        out["stack_supported"] = stack_supported
         out["mergeCommitAllowed"] = repo_obj.get("mergeCommitAllowed")
         out["squashMergeAllowed"] = repo_obj.get("squashMergeAllowed")
         out["rebaseMergeAllowed"] = repo_obj.get("rebaseMergeAllowed")
@@ -2634,6 +2887,17 @@ def _parse_node(
             actor=actor,
             summary="\n".join(lines),
             source_id=_as_optional_str(node.get("id")) or f"{subject_kind}/marked-as-duplicate",
+        )
+
+    if typename == "BaseRefChangedEvent":
+        previous = _as_optional_str(node.get("previousRefName")) or "(unknown)"
+        current = _as_optional_str(node.get("currentRefName")) or "(unknown)"
+        return TimelineEvent(
+            timestamp=_parse_datetime(_as_optional_str(node.get("createdAt"))),
+            kind="pr/base-changed",
+            actor=_get_actor_display(node.get("actor")),
+            summary=f"base changed from `{previous}` to `{current}`",
+            source_id=_as_optional_str(node.get("id")) or "pr/base-changed",
         )
 
     if typename == "HeadRefForcePushedEvent":
