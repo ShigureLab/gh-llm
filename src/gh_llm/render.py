@@ -5,11 +5,13 @@ from datetime import UTC
 from typing import TYPE_CHECKING, cast
 
 from gh_llm.invocation import display_command, display_command_with
+from gh_llm.stack_render import render_stack_mergeability
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from string.templatelib import Template
 
-    from gh_llm.models import CheckItem, TimelineContext, TimelineEvent, TimelinePage
+    from gh_llm.models import CheckItem, CheckResults, TimelineContext, TimelineEvent, TimelinePage
 
 
 DETAILS_BLOCK_RE = re.compile(r"(?is)<details\b[^>]*>(.*?)</details>")
@@ -66,6 +68,20 @@ def render_frontmatter(context: TimelineContext) -> list[str]:
             lines.append(f"head_ref_oid: {context.head_ref_oid}")
         if context.head_ref_deleted is not None:
             lines.append(f"head_ref_deleted: {str(context.head_ref_deleted).lower()}")
+        if context.base_ref_name:
+            lines.append(f"base_ref_name: {context.base_ref_name}")
+        if context.stack:
+            stack = context.stack
+            lines.extend(
+                [
+                    f"stack: {stack.number}",
+                    f"stack_position: {stack.position}",
+                    f"stack_size: {stack.size}",
+                    f"stack_base_ref_name: {stack.base_ref_name}",
+                ]
+            )
+        elif not context.stack_supported:
+            lines.append("stack_supported: false")
     lines.append("---")
     return lines
 
@@ -74,7 +90,13 @@ def render_diff_actions(context: TimelineContext) -> list[str]:
     if context.kind == "issue":
         return []
     repo = f"{context.owner}/{context.name}"
-    return [f"Δ PR diff: `gh pr diff {context.number} --repo {repo}`"]
+    lines = [f"Δ PR diff: `gh pr diff {context.number} --repo {repo}`"]
+    if context.stack:
+        lines.append(
+            f"Diff scope: this PR only (`{context.base_ref_name}` → `{context.head_ref_name}`); "
+            f"stack target: `{context.stack.base_ref_name}`. Review line numbers belong to this PR's diff."
+        )
+    return lines
 
 
 def render_description(context: TimelineContext) -> list[str]:
@@ -202,29 +224,51 @@ def render_issue_actions(context: TimelineContext) -> list[str]:
 def render_checks_section(
     *,
     context: TimelineContext,
-    checks: list[CheckItem],
+    checks: CheckResults,
     show_all: bool,
     is_open: bool,
 ) -> list[str]:
     repo = f"{context.owner}/{context.name}"
-    if not is_open:
+    if not is_open and not show_all:
         return [
             "## Checks",
             f"Closed PR: checks are hidden by default. ⏎ run `{display_command_with(f'pr checks --pr {context.number} --repo {repo} --all')}`",
             "",
         ]
 
-    visible = checks if show_all else [item for item in checks if not item.passed]
-    hidden_count = max(0, len(checks) - len(visible))
+    items = checks.items
+    visible = items if show_all else [item for item in items if not item.passed]
+    hidden_count = max(0, len(items) - len(visible))
     lines = ["## Checks"]
+    if checks.head_oid:
+        lines.append(f"Head snapshot: {checks.head_oid}")
+    if not is_open:
+        lines.append("Historical head checks; current branch requirements are not evaluated.")
+    if checks.required_base_ref:
+        lines.append(f"Required checks target: `{checks.required_base_ref}` (stack base)")
+        if not checks.requirements_known:
+            lines.append(
+                "Required check configuration is partially unavailable; missing required checks may not be listed."
+            )
+    if any(item.workflow for item in items):
+        lines.append("Showing the latest reported run of each workflow/event for this head.")
     if not visible:
-        if checks:
+        if items:
             lines.append("All checks passed.")
         else:
             lines.append("(no checks found)")
     else:
         for idx, item in enumerate(visible, start=1):
             lines.append(f"{idx}. [{item.status}] {item.name} ({item.kind})")
+            details = []
+            if item.required is not None:
+                details.append("required" if item.required else "optional")
+            if item.workflow:
+                details.append(f"workflow: {item.workflow}")
+            if item.app_id is not None:
+                details.append(f"app: {item.app_id}")
+            if details:
+                lines.append("   " + ", ".join(details))
             if item.run_id is not None:
                 if item.job_id is not None:
                     lines.append(f"   ⏎ details: `gh run view {item.run_id} --job {item.job_id} --repo {repo}`")
@@ -248,7 +292,18 @@ def render_checks_section(
     return lines
 
 
-def render_mergeability_section(*, context: TimelineContext, checks: list[CheckItem]) -> list[str]:
+def render_mergeability_section(
+    *, context: TimelineContext, checks: Sequence[CheckItem], requirements_known: bool | None = None
+) -> list[str]:
+    if context.stack:
+        return render_stack_mergeability(context, checks, requirements_known=requirements_known)
+    if not context.stack_supported:
+        return [
+            "## Mergeability",
+            "Status: Unknown; native stack metadata is unavailable.",
+            f"⏎ confirm on GitHub: `gh pr view {context.number} --repo {context.owner}/{context.name} --web`",
+            "",
+        ]
     lines = ["## Mergeability"]
     repo = f"{context.owner}/{context.name}"
     if context.is_merged or context.state == "MERGED":

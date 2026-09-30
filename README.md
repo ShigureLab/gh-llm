@@ -98,9 +98,19 @@ gh-llm pr review-expand PRR_xxx --threads 6-16 --pr 77900 --repo PaddlePaddle/Pa
 gh-llm pr checks --pr 77900 --repo PaddlePaddle/Paddle
 gh-llm pr checks --pr 77900 --repo PaddlePaddle/Paddle --all
 
+# Native GitHub stacks (no gh-stack installation needed)
+gh-llm pr view 2139 --repo PaddlePaddle/PaddleFleet --show stack
+gh-llm pr view 2139 --repo PaddlePaddle/PaddleFleet --show stack,checks,mergeability
+
 # Detect conflicted files on demand (for conflicted PRs)
 gh-llm pr conflict-files --pr 77971 --repo PaddlePaddle/Paddle
 ```
+
+Native stacks appear in the default PR overview with bottom-to-top ordering, the current layer, the target branch, and each member's draft, review, merge, and CI state. `--show meta` includes membership without loading the other members; `--show stack` loads their summaries without fetching their timelines or detailed checks.
+
+Checks are paginated and tied to the PR head. Workflow names and run links distinguish same-named jobs; the display keeps the latest reported run per workflow and event. For stacks, required checks come from the stack target's classic branch protection and rulesets, with missing contexts shown as `EXPECTED`. Required checks pinned to an app must match that app; optional failures alone do not block a stack merge. If branch rules are inaccessible, the output reports that required-check coverage is incomplete. `pr checks --all` also shows historical head checks for closed and merged PRs.
+
+Stack mergeability describes the unmerged layers from the bottom through the selected PR and their blockers, then links to GitHub's native stack merge controls. GitHub makes the final readiness decision. Diff and `review-start` remain scoped to the selected PR and its direct base; cumulative stack diffs are not included. Base branch changes appear in the timeline. Historical stack join/leave events are not reconstructed: the API does not reliably expose their historical stack IDs.
 
 ### PR Body Scaffold
 
@@ -151,7 +161,7 @@ Use `--auto-collapse-author <login>` on `pr view`, `pr timeline-expand`, `issue 
 
 `--show` values:
 
-- PR: `meta`, `description`, `timeline`, `checks`, `actions`, `mergeability`, `all`
+- PR: `meta`, `description`, `timeline`, `checks`, `actions`, `mergeability`, `stack`, `all`
 - Issue: `meta`, `description`, `timeline`, `actions`, `all`
 - Supports comma-separated values and repeated flags.
 - `summary` is supported as an alias for `meta,description`.
