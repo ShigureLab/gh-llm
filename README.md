@@ -99,8 +99,8 @@ gh-llm pr checks --pr 77900 --repo PaddlePaddle/Paddle
 gh-llm pr checks --pr 77900 --repo PaddlePaddle/Paddle --all
 
 # Native GitHub stacks (no gh-stack installation needed)
-gh-llm pr view 2139 --repo PaddlePaddle/PaddleFleet --show stack
-gh-llm pr view 2139 --repo PaddlePaddle/PaddleFleet --show stack,checks,mergeability
+gh-llm pr view 825 --repo yutto-dev/yutto --show stack
+gh-llm pr view 825 --repo yutto-dev/yutto --show stack,checks,mergeability
 
 # Detect conflicted files on demand (for conflicted PRs)
 gh-llm pr conflict-files --pr 77971 --repo PaddlePaddle/Paddle
