@@ -18,6 +18,7 @@ from gh_llm.commands.options import (
     resolve_file_or_inline_text,
     resolve_subject,
 )
+from gh_llm.commands.pr_merge import register_merge_parsers
 from gh_llm.github_api import GitHubClient
 from gh_llm.invocation import display_command_with
 from gh_llm.models import CheckResults, PullRequestDiffPage
@@ -74,6 +75,7 @@ class _ShowOptions:
 def register_pr_parser(subparsers: Any) -> None:
     pr_parser = subparsers.add_parser("pr", help="pull request reading, review, and actions")
     pr_subparsers = pr_parser.add_subparsers(dest="pr_command")
+    register_merge_parsers(pr_subparsers)
 
     view_parser = pr_subparsers.add_parser(
         "view",

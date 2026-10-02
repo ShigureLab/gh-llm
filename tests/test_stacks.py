@@ -35,6 +35,7 @@ def meta(*, position: int = 2, size: int = 3) -> PullRequestMeta:
         head_ref_oid=HEAD,
         head_ref_name="layer-2",
         base_ref_name="layer-1",
+        squash_merge_allowed=True,
         stack=PullRequestStack(number=50, position=position, size=size, base_ref_name="main"),
     )
 
@@ -82,7 +83,8 @@ def test_merge_scope_skips_merged_layers_and_excludes_upper_blockers() -> None:
     assert "scope into `main`: #20\n" in rendered
     assert "No blockers reported" in rendered
     assert "#30:" not in rendered and "gh pr merge" not in rendered
-    assert "--web" in rendered
+    assert f"gh-llm pr merge 20 --repo owner/repo --squash --head {HEAD}" in rendered
+    assert "--web" not in rendered and "--subject" not in rendered
 
 
 def test_downstack_draft_review_and_required_checks_block_merge() -> None:
@@ -92,6 +94,7 @@ def test_downstack_draft_review_and_required_checks_block_merge() -> None:
     assert "Stack merge is blocked" in rendered
     assert "#10: draft, review: REVIEW_REQUIRED" in rendered
     assert "#20: required checks not passed: test" in rendered
+    assert "gh-llm pr merge" not in rendered and "--web" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -104,6 +107,7 @@ def test_downstack_draft_review_and_required_checks_block_merge() -> None:
 def test_incomplete_or_unknown_stack_cannot_claim_ready(entries: tuple[StackEntry, ...]) -> None:
     rendered = "\n".join(render_mergeability_section(context=context(entries), checks=[]))
     assert "readiness is unknown" in rendered and "Merging is allowed" not in rendered
+    assert "gh-llm pr merge" not in rendered and "--web" not in rendered
 
 
 def test_optional_check_failure_does_not_block_stack() -> None:
