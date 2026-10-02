@@ -5,6 +5,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, cast
 
 from gh_llm.invocation import display_command, display_command_with
+from gh_llm.merge_render import render_merge_actions
 from gh_llm.stack_render import render_stack_mergeability
 
 if TYPE_CHECKING:
@@ -301,7 +302,7 @@ def render_mergeability_section(
         return [
             "## Mergeability",
             "Status: Unknown; native stack metadata is unavailable.",
-            f"⏎ confirm on GitHub: `gh pr view {context.number} --repo {context.owner}/{context.name} --web`",
+            "Merge scope cannot be determined; refresh the PR once native stack metadata is available.",
             "",
         ]
     lines = ["## Mergeability"]
@@ -384,34 +385,7 @@ def render_mergeability_section(
         lines.append("Status: Merging is allowed")
 
     if context.state == "OPEN" and not blockers:
-        merge_subject = f"{context.title} (#{context.number})"
-        merge_subject_quoted = _shell_single_quote(merge_subject)
-        available_methods = [
-            ("merge", context.merge_commit_allowed),
-            ("squash", context.squash_merge_allowed),
-            ("rebase", context.rebase_merge_allowed),
-        ]
-        enabled_methods = [method for method, enabled in available_methods if enabled is True]
-        disabled_methods = [method for method, enabled in available_methods if enabled is False]
-        if enabled_methods:
-            lines.append("Merge actions:")
-            lines.append(f"⌨ merge_subject: '{merge_subject}'")
-            if context.co_author_trailers:
-                lines.append("⌨ merge_body (default):")
-                lines.append("   <optional_merge_body>")
-                lines.append("")
-                lines.extend(f"   {trailer}" for trailer in context.co_author_trailers)
-            else:
-                lines.append("⌨ merge_body: '<optional_merge_body>'")
-            for method in enabled_methods:
-                if method == "rebase":
-                    lines.append(f"⏎ rebase via gh: `gh pr merge {context.number} --repo {repo} --rebase`")
-                    continue
-                lines.append(
-                    f"⏎ {method} via gh: `gh pr merge {context.number} --repo {repo} --{method} --subject {merge_subject_quoted} --body '<merge_body>'`"
-                )
-        if disabled_methods:
-            lines.append(f"Disabled by repository settings: {', '.join(disabled_methods)}")
+        lines.extend(render_merge_actions(context))
 
     details: list[str] = []
     if merge_state:
@@ -427,10 +401,6 @@ def render_mergeability_section(
         lines.append("Details: " + ", ".join(details))
     lines.append("")
     return lines
-
-
-def _shell_single_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def render_hidden_gap(context: TimelineContext, hidden_pages: list[int]) -> list[str]:

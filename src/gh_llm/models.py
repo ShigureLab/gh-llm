@@ -13,6 +13,19 @@ class PullRequestRef:
 
 
 @dataclass(frozen=True)
+class AsyncMergeResult:
+    status: str
+    message: str = ""
+    request_id: str | None = None
+    sha: str | None = None
+    merge_method: str | None = None
+    merge_action: str | None = None
+    expected_head_sha: str | None = None
+    bypass_rules: bool | None = None
+    existing_request: bool = False
+
+
+@dataclass(frozen=True)
 class StackEntry:
     position: int
     number: int

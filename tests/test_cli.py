@@ -4664,14 +4664,14 @@ def test_pr_mergeability_show_merge_actions_with_repo_method_filter(
     assert "Co-authored-by: Alice Example <alice@example.com>" in out
     assert "Co-authored-by: Bob Example <bob@example.com>" in out
     assert (
-        "⏎ merge via gh: `gh pr merge 77972 --repo PaddlePaddle/Paddle --merge --subject 'Timeline test (#77972)' --body '<merge_body>'`"
+        "⏎ merge: `gh-llm pr merge 77972 --repo PaddlePaddle/Paddle --merge --head 3333333333333333333333333333333333333333 --subject 'Timeline test (#77972)' --body '<merge_body>'`"
         in out
     )
     assert (
-        "⏎ squash via gh: `gh pr merge 77972 --repo PaddlePaddle/Paddle --squash --subject 'Timeline test (#77972)' --body '<merge_body>'`"
+        "⏎ squash: `gh-llm pr merge 77972 --repo PaddlePaddle/Paddle --squash --head 3333333333333333333333333333333333333333 --subject 'Timeline test (#77972)' --body '<merge_body>'`"
         in out
     )
-    assert "⏎ rebase via gh: `gh pr merge 77972 --repo PaddlePaddle/Paddle --rebase`" not in out
+    assert "⏎ rebase:" not in out
     assert "Disabled by repository settings: rebase" in out
 
 
@@ -4683,9 +4683,12 @@ def test_pr_mergeability_rebase_action_has_no_subject_or_body(
     code = cli.run(["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--show", "mergeability"])
     assert code == 0
     out = capsys.readouterr().out
-    assert "⏎ rebase via gh: `gh pr merge 77928 --repo PaddlePaddle/Paddle --rebase`" in out
-    assert "--rebase --subject" not in out
-    assert "--rebase --body" not in out
+    rebase_action = next(line for line in out.splitlines() if "⏎ rebase:" in line)
+    assert (
+        "gh-llm pr merge 77928 --repo PaddlePaddle/Paddle --rebase --head 3333333333333333333333333333333333333333"
+        in rebase_action
+    )
+    assert "--subject" not in rebase_action and "--body" not in rebase_action
 
 
 def test_pr_view_invalid_expand_error_lists_valid_values(capsys: pytest.CaptureFixture[str]) -> None:

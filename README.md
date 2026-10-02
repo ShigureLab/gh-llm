@@ -110,7 +110,31 @@ Native stacks appear in the default PR overview with bottom-to-top ordering, the
 
 Checks are paginated and tied to the PR head. Workflow names and run links distinguish same-named jobs; the display keeps the latest reported run per workflow and event. For stacks, required checks come from the stack target's classic branch protection and rulesets, with missing contexts shown as `EXPECTED`. Required checks pinned to an app must match that app; optional failures alone do not block a stack merge. If branch rules are inaccessible, the output reports that required-check coverage is incomplete. `pr checks --all` also shows historical head checks for closed and merged PRs.
 
-Stack mergeability describes the unmerged layers from the bottom through the selected PR and their blockers, then links to GitHub's native stack merge controls. GitHub makes the final readiness decision. Diff and `review-start` remain scoped to the selected PR and its direct base; cumulative stack diffs are not included. Base branch changes appear in the timeline. Historical stack join/leave events are not reconstructed: the API does not reliably expose their historical stack IDs.
+Stack mergeability describes the unmerged layers from the bottom through the selected PR and their blockers, then offers `gh-llm pr merge` commands pinned to the inspected head. GitHub makes the final readiness decision. Diff and `review-start` remain scoped to the selected PR and its direct base; cumulative stack diffs are not included. Base branch changes appear in the timeline. Historical stack join/leave events are not reconstructed: the API does not reliably expose their historical stack IDs.
+
+### Merging PRs and Native Stacks
+
+`pr merge` uses GitHub's [asynchronous merge API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request-asynchronously) for both ordinary and stacked PRs. It requires neither a browser nor the `gh-stack` extension. For a stack, selecting a PR also merges its open downstack PRs into the stack target; upper layers are excluded. The command prints this scope before submitting one request to GitHub.
+
+```bash
+# Use the head SHA from `pr view` to guard against changes since inspection
+gh-llm pr merge <pr_number> --repo yutto-dev/yutto --squash --head <head_sha>
+
+# Customize a direct merge's commit message
+gh-llm pr merge <pr_number> --repo yutto-dev/yutto --merge \
+  --subject 'Feature title' --body-file merge-message.md
+
+# Request the merge queue explicitly; its configuration determines the merge method
+gh-llm pr merge <pr_number> --repo yutto-dev/yutto --merge-action merge_queue
+
+# Return immediately and retain the request UUID for a later status check
+gh-llm pr merge <pr_number> --repo yutto-dev/yutto --squash --timeout 0
+gh-llm pr merge-status <uuid> --pr <pr_number> --repo yutto-dev/yutto --timeout 60
+```
+
+By default, `pr merge` follows the target branch's merge queue configuration and polls for up to 60 seconds. `--merge-action direct_merge` requests a direct merge; rules are enforced unless you explicitly pass `--bypass-rules` and have the necessary permission. `--merge`, `--squash`, and `--rebase` select the direct merge method. Omitted commit titles, messages, and methods use GitHub's defaults. `--body-file -` reads a message from standard input. Without `--head`, the freshly fetched PR head is sent as the expected SHA.
+
+Output distinguishes `pending`, `merged`, `enqueued`, and `failed`. Exit codes are **0** for merged or enqueued, **1** for failure, and **2** for a request still pending after the polling timeout. `enqueued` means only that the PR entered the merge queue; inspect the PR to confirm its eventual merge. The request UUID and a `merge-status` command are printed before polling, so interrupted waits can be resumed without another write. An existing pending request is followed with its original options, which are shown in the output. Merge writes are never automatically retried after a network error. GitHub retains request results for 24 hours after their last update; if a result has expired, inspect the PR's current state.
 
 ### PR Body Scaffold
 

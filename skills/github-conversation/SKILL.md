@@ -18,8 +18,8 @@ metadata:
 
 ## Tool split
 
-1. Use `gh-llm` for reading context (timeline, collapsed items, review threads, checks) and structured review actions (reply, submit, resolve).
-2. Use `gh` for simple write actions (comment, reactions, labels, assignees, reviewers, close/reopen, merge).
+1. Use `gh-llm` for reading context (timeline, collapsed items, review threads, checks), structured review actions (reply, submit, resolve), and asynchronous PR or stack merges.
+2. Use `gh` for simple write actions (comment, reactions, labels, assignees, reviewers, close/reopen).
 3. If context is incomplete, do not reply yet; expand first.
 4. Apply the current task's publication mode and authorized scope to every GitHub write, including reactions and resolving threads. In read-only or dry-run mode, keep proposed updates local. `viewerCanReact` indicates account capability, not operator authorization.
 
@@ -132,6 +132,17 @@ gh-llm pr body-template \
 ```
 
 Use this before `gh pr create` when you need to load a repo PR template, append required sections, and produce a ready-to-edit body file.
+
+### Merge a PR or native stack
+
+After checking the current PR and receiving authorization to merge, use the inspected head SHA:
+
+```bash
+gh-llm pr merge <pr_number> --repo <owner/repo> --squash --head <head_sha>
+gh-llm pr merge-status <uuid> --pr <pr_number> --repo <owner/repo> --timeout 60
+```
+
+For a native stack, the merge includes the selected PR and its open downstack PRs. Verify that this entire scope is authorized. The async API honors the target branch's merge queue by default. `enqueued` is not merged; check the PR again for the eventual outcome. A pending request returns exit code 2 after the timeout and prints its UUID and resume command. Resume with `merge-status` instead of resubmitting. When an existing request is returned, its original options remain in effect. Do not retry a merge write blindly after a network error; inspect the PR first.
 
 ### Read an issue
 

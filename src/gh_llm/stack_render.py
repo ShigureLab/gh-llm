@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from gh_llm.invocation import display_command_with
+from gh_llm.merge_render import render_merge_actions
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,7 +47,6 @@ def render_stack_mergeability(
 ) -> list[str]:
     stack = context.stack
     assert stack is not None
-    repo = f"{context.owner}/{context.name}"
     lines = ["## Mergeability"]
     if context.is_merged or context.state == "MERGED":
         return [*lines, "Status: Already merged", ""]
@@ -87,7 +87,7 @@ def render_stack_mergeability(
     elif unknown:
         lines.append("Status: Stack merge readiness is unknown")
     else:
-        lines.append("Status: No blockers reported for this merge scope; confirm readiness on GitHub.")
+        lines.append("Status: No blockers reported for this merge scope; GitHub validates requirements when merging.")
     if not stack.complete:
         lines.append("Some stack entries are unavailable.")
     if requirements_known is False:
@@ -97,6 +97,7 @@ def render_stack_mergeability(
     lines.append(
         "GitHub evaluates stack rules against the target branch. Optional CI failures alone are not merge blockers."
     )
-    lines.append(f"⏎ open native stack merge controls: `gh pr view {context.number} --repo {repo} --web`")
+    if not blockers and not unknown:
+        lines.extend(render_merge_actions(context))
     lines.append("")
     return lines

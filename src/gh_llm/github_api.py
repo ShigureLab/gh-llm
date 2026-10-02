@@ -10,10 +10,12 @@ from datetime import UTC, datetime
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
+from uuid import UUID
 
 from gh_llm.diagnostics import GhCommandError, looks_like_transport_error
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.models import (
+    AsyncMergeResult,
     CheckItem,
     CheckResults,
     PageInfo,
@@ -1715,6 +1717,53 @@ mutation($id:ID!,$body:String!){
         login = _as_optional_str(payload.get("login"))
         return login or ""
 
+    def request_pull_request_merge(
+        self,
+        ref: PullRequestRef,
+        *,
+        sha: str | None,
+        merge_method: str | None = None,
+        merge_action: str = "default",
+        subject: str | None = None,
+        body: str | None = None,
+        bypass_rules: bool = False,
+    ) -> AsyncMergeResult:
+        cmd = _async_merge_command(ref)
+        cmd.extend(
+            ["--method", "PUT", "-f", f"merge_action={merge_action}", "-F", f"bypass_rules={str(bypass_rules).lower()}"]
+        )
+        for key, value in (
+            ("sha", sha),
+            ("merge_method", merge_method),
+            ("commit_title", subject),
+            ("commit_message", body),
+        ):
+            if value is not None:
+                cmd.extend(["-f", f"{key}={value}"])
+        try:
+            # A transport failure may occur after acceptance. Never retry a merge write automatically.
+            payload = _run_command_json(cmd)
+        except GhCommandError as error:
+            if "HTTP 409" not in error.stderr:
+                raise
+            try:
+                payload = _as_dict(json.loads(error.stdout), context="existing merge request")
+                result = _parse_async_merge_result(payload)
+            except ValueError, RuntimeError:
+                raise error from None
+            if result.status != "pending":
+                raise
+            return replace(result, existing_request=True)
+        return _parse_async_merge_result(payload)
+
+    def fetch_pull_request_merge(self, ref: PullRequestRef, request_id: str) -> AsyncMergeResult:
+        request_id = str(UUID(request_id))
+        payload = _run_command_json(_async_merge_command(ref, request_id))
+        result = _parse_async_merge_result(payload)
+        if result.request_id and result.request_id != request_id:
+            raise RuntimeError("merge response does not match the requested UUID")
+        return replace(result, request_id=request_id)
+
     def fetch_checks(self, ref: PullRequestRef, *, meta: PullRequestMeta | None = None) -> CheckResults:
         nodes: list[dict[str, object]] = []
         head_oid = meta.head_ref_oid if meta else None
@@ -2442,6 +2491,43 @@ def _graphql_query_max_attempts(query: str) -> int:
     if query.lstrip().startswith("mutation"):
         return GRAPHQL_MUTATION_MAX_ATTEMPTS
     return GRAPHQL_MAX_ATTEMPTS
+
+
+def _async_merge_command(ref: PullRequestRef, request_id: str | None = None) -> list[str]:
+    endpoint = f"repos/{ref.owner}/{ref.name}/pulls/{ref.number}/merge-async"
+    if request_id:
+        endpoint += f"/{request_id}"
+    return [
+        "gh",
+        "api",
+        endpoint,
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        "X-GitHub-Api-Version: 2026-03-10",
+    ]
+
+
+def _parse_async_merge_result(payload: dict[str, object]) -> AsyncMergeResult:
+    status = _as_optional_str(payload.get("status"))
+    if status not in {"pending", "merged", "enqueued", "failed"}:
+        raise RuntimeError(f"unexpected asynchronous merge status: {status!r}")
+    details = _as_dict(payload.get("details"), context="merge result details")
+    request_id = _as_optional_str(details.get("uuid"))
+    if request_id:
+        request_id = str(UUID(request_id))
+    if status == "pending" and not request_id:
+        raise RuntimeError("pending merge response is missing its request UUID")
+    return AsyncMergeResult(
+        status=status,
+        message=_as_optional_str(details.get("message")) or "",
+        request_id=request_id,
+        sha=_as_optional_str(details.get("sha")),
+        merge_method=_as_optional_str(details.get("merge_method")),
+        merge_action=_as_optional_str(details.get("merge_action")),
+        expected_head_sha=_as_optional_str(details.get("expected_head_sha")),
+        bypass_rules=_as_optional_bool(details.get("bypass_rules")),
+    )
 
 
 def _run_command_json(
