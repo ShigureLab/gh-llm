@@ -5,14 +5,14 @@ import math
 import sys
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from gh_llm import __version__, cli, github_api
 from gh_llm.commands import doctor as doctor_commands, pr as pr_commands
 from gh_llm.models import ReviewThreadSummary
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 class FakeCompletedProcess:
@@ -918,6 +918,136 @@ def test_pr_view_auto_collapse_author_collapses_selected_reviews(
     assert "gh-llm pr review-expand PRR_mock --pr 77928 --repo PaddlePaddle/Paddle" in out
     assert "review body from noisy bot" not in out
     assert "self comment" in out
+
+
+@pytest.mark.parametrize("subject", ["pr", "issue", "review"])
+def test_view_after_includes_edited_old_comments_and_reviews(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], subject: str
+) -> None:
+    kind = "issue" if subject == "issue" else "pr"
+    events = _issue_events() if kind == "issue" else _base_events()
+    index = 4 if subject == "review" else 0
+    events[index].update(body="edited older content", lastEditedAt="2026-02-16T09:00:00Z", isMinimized=False)
+    monkeypatch.setattr(sys.modules[__name__], "_issue_events" if kind == "issue" else "_events", lambda: events)
+    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+
+    args = [kind, "view", "77924" if kind == "issue" else "77928", "--repo", "PaddlePaddle/Paddle"]
+    args.extend(["--page-size", "2", "--after", "2026-02-15T00:00:00Z"])
+    assert cli.run(args) == 0
+    out = capsys.readouterr().out
+    expected_header = {
+        "pr": "2. [2026-02-14 14:31 UTC] comment by @bot",
+        "issue": "1. [2026-02-13 10:00 UTC] comment by @bot",
+        "review": "5. [2026-02-14 14:51 UTC] review/approved by @reviewer",
+    }[subject]
+    assert expected_header in out
+    assert "timeline_events: 1\n" in out
+    assert out.count("edited older content") == 1
+    assert "Edited: 2026-02-16T09:00:00Z [within selected window]" in out
+
+    assert cli.run([*args, "--auto-collapse-author", "bot,reviewer"]) == 0
+    collapsed = capsys.readouterr().out
+    assert expected_header in collapsed
+    assert "Edited: 2026-02-16T09:00:00Z [within selected window]" in collapsed
+    assert "edited older content" not in collapsed
+    assert "auto-collapsed" in collapsed
+
+
+@pytest.mark.parametrize(
+    ("after", "edited_at", "included"),
+    [
+        ("2026-02-14T15:00:00Z", "2026-02-14T15:00:00Z", False),
+        ("2026-02-14T15:00:00Z", "2026-02-14T15:05:00Z", True),
+        ("2026-02-14T15:00:00Z", "2026-02-14T15:10:00Z", False),
+        (None, "2026-02-14T15:15:00Z", True),
+    ],
+)
+def test_edited_comment_window_boundaries_and_before_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    after: str | None,
+    edited_at: str,
+    included: bool,
+) -> None:
+    comment = _base_events()[3]
+    comment.update(body="edited boundary comment", lastEditedAt=edited_at)
+    monkeypatch.setattr(sys.modules[__name__], "_events", lambda: [comment])
+    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+    args = ["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--before", "2026-02-14T15:10:00Z"]
+    if after is not None:
+        args.extend(["--after", after])
+
+    assert cli.run(args) == 0
+    out = capsys.readouterr().out
+    assert ("edited boundary comment" in out) is included
+    assert f"timeline_events: {int(included)}\n" in out
+    if included:
+        assert "1. [2026-02-14 14:44 UTC] comment by @user2" in out
+
+
+@pytest.mark.parametrize(
+    ("edited_comment", "folding"),
+    [
+        ("root", None),
+        ("reply", None),
+        ("minimized", None),
+        ("new_reply", None),
+        ("reply", "author"),
+        ("reply", "minimized"),
+    ],
+)
+def test_pr_view_after_edited_thread_keeps_context_and_counts_comments_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    edited_comment: str,
+    folding: str | None,
+) -> None:
+    events = _base_events()
+    events[4]["isMinimized"] = folding == "minimized"
+    thread_payload = _review_threads_payload(None)
+    thread = thread_payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][1]
+    thread["isResolved"] = True
+    root, reply = thread["comments"]["nodes"]
+    root["body"] = "original root context"
+    reply["body"] = "original reply context"
+    minimized = dict(
+        root, id="rc_minimized", body="hidden minimized context", isMinimized=True, minimizedReason="OUTDATED"
+    )
+    thread["comments"]["nodes"].append(minimized)
+    target = {"root": root, "reply": reply, "minimized": minimized, "new_reply": reply}[edited_comment]
+    target["lastEditedAt"] = "2026-02-14T15:05:00Z"
+    if edited_comment == "new_reply":
+        target["createdAt"] = "2026-02-14T15:01:00Z"
+    monkeypatch.setattr(sys.modules[__name__], "_events", lambda: events)
+    monkeypatch.setattr(sys.modules[__name__], "_review_threads_payload", lambda after: thread_payload)
+    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+
+    args = ["pr", "view", "77928", "--repo", "PaddlePaddle/Paddle", "--page-size", "2"]
+    args.extend(["--after", "2026-02-14T15:00:00Z", "--before", "2026-02-14T15:10:00Z"])
+    if folding == "author":
+        args.extend(["--auto-collapse-author", "reviewer"])
+    assert cli.run(args) == 0
+    out = capsys.readouterr().out
+    assert "5. [2026-02-14 14:51 UTC] review/approved by @reviewer" in out
+    assert "timeline_events: 1\n" in out
+    assert "hidden minimized context" not in out
+    if folding is not None:
+        assert "Thread comments edited in selected window: 1; latest: 2026-02-14T15:05:00Z" in out
+        assert "original root context" not in out
+        assert "original reply context" not in out
+        assert "lgtm" not in out
+        assert "pr review-expand PRR_mock" in out
+        assert "Edited: 2026-02-14T15:05:00Z" not in out
+        return
+    assert out.count("Thread[1] PRRT_mock_1 (1 update in selected window; thread kept for context)") == 1
+    assert "original root context" in out
+    assert "original reply context" in out
+    assert "(hidden comment: outdated)" in out
+    assert "Unresolve via" in out
+    assert "PRRT_mock_2" not in out
+    assert "Edited: 2026-02-14T15:05:00Z [within selected window]" in out
+    assert "comment_id: rc_minimized" in out
+    assert "pr comment-expand rc_minimized" in out
 
 
 def test_pr_view_after_filters_incremental_events_and_avoids_forward_bootstrap(

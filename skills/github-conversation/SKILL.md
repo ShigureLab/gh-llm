@@ -118,7 +118,7 @@ gh-llm pr review-expand <PRR_id[,PRR_id...]> --pr <pr> --repo <owner/repo>
 gh-llm pr checks --pr <pr> --repo <owner/repo>
 ```
 
-Use plain `view` for the first pass. On follow-up reads, reuse the previous frontmatter `fetched_at` as `--after <previous_fetched_at>` for an incremental timeline refresh.
+Use plain `view` for the first pass. On follow-up reads, reuse the previous frontmatter `fetched_at` as `--after <previous_fetched_at>` for an incremental timeline refresh. Older comments and reviews also appear when their latest body edit falls in the selected window; affected threads retain their conversation context. Read the `Edited:` time alongside the original event time. The displayed body is current content, not a historical version.
 
 ### Prepare a PR body
 

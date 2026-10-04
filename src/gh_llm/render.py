@@ -4,6 +4,7 @@ import shlex
 from datetime import UTC
 from typing import TYPE_CHECKING, cast
 
+from gh_llm.commands.options import format_timeline_window_marker, format_timestamp_utc, parse_timeline_window
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.merge_render import render_merge_actions
 from gh_llm.stack_render import render_stack_mergeability
@@ -440,6 +441,22 @@ def _render_item(index: int, event: TimelineEvent, context: TimelineContext, com
         f"(details body collapsed; {details_action})",
     )
     lines = [f"{index}. [{timestamp}] {event.kind} by @{event.actor}"]
+    timeline_window = parse_timeline_window(after=context.timeline_after, before=context.timeline_before)
+    if event.last_edited_at is not None:
+        edited_window_marker = format_timeline_window_marker(event.last_edited_at, timeline_window)
+        lines.append(f"   Edited: {format_timestamp_utc(event.last_edited_at)}{edited_window_marker}")
+    if timeline_window.after is not None:
+        thread_edits = [
+            edited_at
+            for edited_at in event.thread_comment_edit_timestamps
+            if edited_at > timeline_window.after
+            and (timeline_window.before is None or edited_at < timeline_window.before)
+        ]
+        if thread_edits:
+            lines.append(
+                f"   Thread comments edited in selected window: {len(thread_edits)}; "
+                f"latest: {format_timestamp_utc(max(thread_edits))}"
+            )
     auto_collapse_summary = _auto_collapse_summary(event=event, context=context)
     if auto_collapse_summary is not None:
         repo = f"{context.owner}/{context.name}"
@@ -483,6 +500,10 @@ def _render_item(index: int, event: TimelineEvent, context: TimelineContext, com
         if "diff hunk clipped" in detail_text:
             lines.append(
                 f"   ⏎ run `{display_command_with(f'pr review-expand {event.source_id} --pr {context.number} --repo {context.owner}/{context.name} --diff-hunk-lines 0')}` for full diff hunk context"
+            )
+        elif event.is_truncated:
+            lines.append(
+                f"   ⏎ run `{display_command_with(f'pr review-expand {event.source_id} --pr {context.number} --repo {context.owner}/{context.name}')}` for full review"
             )
     if event.is_truncated:
         if event.kind == "comment":
@@ -575,6 +596,7 @@ def render_event_detail(index: int, event: TimelineEvent) -> list[str]:
         f"- Actor: @{event.actor}",
         f"- Time: {timestamp}",
         f"- Source ID: {event.source_id}",
+        *([f"- Edited: {format_timestamp_utc(event.last_edited_at)}"] if event.last_edited_at is not None else []),
         "",
     ]
     detail = event.full_text or event.summary
@@ -590,7 +612,10 @@ def render_event_detail(index: int, event: TimelineEvent) -> list[str]:
 def render_event_detail_blocks(index: int, event: TimelineEvent) -> list[str]:
     detail = event.full_text or event.summary
     blocks = _extract_details_blocks(detail)
-    lines = [f"## Details Blocks for Event {index}"]
+    lines = [
+        f"## Details Blocks for Event {index}",
+        *([f"- Edited: {format_timestamp_utc(event.last_edited_at)}"] if event.last_edited_at is not None else []),
+    ]
     if not blocks:
         lines.append("(no <details> blocks found)")
         return lines
@@ -608,8 +633,16 @@ def render_comment_node_detail(comment_id: str, node: dict[str, object]) -> list
     typename = str(node.get("__typename") or "")
     actor = _render_actor(node.get("author"))
     created_at = str(node.get("createdAt") or "")
+    last_edited_at = str(node.get("lastEditedAt") or "")
     body = str(node.get("body") or "")
-    lines = [f"## Comment {comment_id}", f"- Type: {typename}", f"- Actor: @{actor}", f"- Time: {created_at}", ""]
+    lines = [
+        f"## Comment {comment_id}",
+        f"- Type: {typename}",
+        f"- Actor: @{actor}",
+        f"- Time: {created_at}",
+        *([f"- Edited: {last_edited_at}"] if last_edited_at else []),
+        "",
+    ]
     lines.extend(["<comment>", *(body.splitlines() or [""]), "</comment>"])
     reactions = _render_reactions(node.get("reactionGroups"))
     if reactions:
