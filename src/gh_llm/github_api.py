@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 from uuid import UUID
 
+from gh_llm.commands.options import format_timeline_window_marker
 from gh_llm.diagnostics import GhCommandError, looks_like_transport_error
 from gh_llm.invocation import display_command, display_command_with
 from gh_llm.models import (
@@ -72,6 +73,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$after:String){
             id
             url
             createdAt
+            lastEditedAt
             body
             isMinimized
             minimizedReason
@@ -81,6 +83,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$after:String){
           ... on PullRequestReview{
             id
             submittedAt
+            lastEditedAt
             state
             body
             isMinimized
@@ -175,6 +178,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$after:String){
             id
             url
             createdAt
+            lastEditedAt
             body
             isMinimized
             minimizedReason
@@ -284,6 +288,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$before:String){
             id
             url
             createdAt
+            lastEditedAt
             body
             isMinimized
             minimizedReason
@@ -293,6 +298,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$before:String){
           ... on PullRequestReview{
             id
             submittedAt
+            lastEditedAt
             state
             body
             isMinimized
@@ -387,6 +393,7 @@ query($owner:String!,$name:String!,$number:Int!,$pageSize:Int!,$before:String){
             id
             url
             createdAt
+            lastEditedAt
             body
             isMinimized
             minimizedReason
@@ -503,6 +510,7 @@ query($owner:String!,$name:String!,$number:Int!,$after:String){
               originalStartLine
               diffHunk
               createdAt
+              lastEditedAt
               outdated
               isMinimized
               minimizedReason
@@ -649,6 +657,7 @@ query($id:ID!){
     ... on IssueComment{
       id
       createdAt
+      lastEditedAt
       body
       isMinimized
       minimizedReason
@@ -658,6 +667,7 @@ query($id:ID!){
     ... on PullRequestReviewComment{
       id
       createdAt
+      lastEditedAt
       body
       outdated
       isMinimized
@@ -2685,6 +2695,8 @@ def _parse_node(
     subject_kind: str,
 ) -> TimelineEvent | None:
     typename = str(node.get("__typename") or "")
+    last_edited_at_text = _as_optional_str(node.get("lastEditedAt"))
+    last_edited_at = _parse_datetime(last_edited_at_text) if last_edited_at_text else None
     if typename == "IssueComment":
         body = _as_optional_str(node.get("body"))
         author = node.get("author")
@@ -2713,6 +2725,7 @@ def _parse_node(
             reactions_summary=_format_reactions(node.get("reactionGroups")),
             details_collapsed_count=details_collapsed_count,
             auto_collapse_kind="comment",
+            last_edited_at=last_edited_at,
         )
 
     if typename == "PullRequestReview":
@@ -2731,10 +2744,15 @@ def _parse_node(
                 source_id=review_id,
                 actor_login=actor_login,
                 full_text=_as_optional_str(node.get("body")),
+                related_timestamps=_collect_review_comment_timestamps(threads_for_review.get(review_id, [])),
                 is_truncated=True,
                 minimized_hidden_count=1,
                 minimized_hidden_reasons=minimized_reason,
                 auto_collapse_kind="review",
+                last_edited_at=last_edited_at,
+                thread_comment_edit_timestamps=_collect_review_comment_edit_timestamps(
+                    threads_for_review.get(review_id, [])
+                ),
             )
         full_review, resolved_hidden_count, has_clipped_diff_hunk, details_collapsed_count = _build_review_text(
             node=node,
@@ -2775,6 +2793,10 @@ def _parse_node(
             minimized_hidden_reasons=minimized_hidden_reasons,
             details_collapsed_count=details_collapsed_count,
             auto_collapse_kind="review",
+            last_edited_at=last_edited_at,
+            thread_comment_edit_timestamps=_collect_review_comment_edit_timestamps(
+                threads_for_review.get(review_id, [])
+            ),
         )
 
     if typename == "ReviewDismissedEvent":
@@ -3194,7 +3216,7 @@ def _build_review_text(
     review_in_window = _timestamp_matches_timeline_window(
         _parse_datetime(_as_optional_str(node.get("submittedAt"))),
         timeline_window,
-    )
+    ) or _comment_edit_matches_timeline_window(node, timeline_window)
     total_count = 0
     detail_lines: list[str] = []
     thread_blocks: list[list[str]] = []
@@ -3335,6 +3357,10 @@ def _render_review_thread_block(
                 f"pr comment-expand {comment_id} --pr {ref.number} --repo {ref.owner}/{ref.name}"
             )
             lines.append(f"- [{comment_index}] (hidden comment: {reason_text})")
+            last_edited_at = _as_optional_str(comment.get("lastEditedAt"))
+            if last_edited_at:
+                edited_window_marker = format_timeline_window_marker(_parse_datetime(last_edited_at), timeline_window)
+                lines.append(f"  Edited: {last_edited_at}{edited_window_marker}")
             lines.append(f"  ◌ comment_id: {comment_id}")
             lines.append(f"  ⏎ run `{comment_expand_cmd}`")
             continue
@@ -3415,11 +3441,22 @@ def _collect_thread_comment_timestamps(comments: list[object]) -> list[datetime]
     timestamps: list[datetime] = []
     for raw_comment in comments:
         comment = _as_dict(raw_comment, context="review comment timestamp")
-        created_at = _as_optional_str(comment.get("createdAt"))
-        if created_at is None:
-            continue
-        timestamps.append(_parse_datetime(created_at))
+        for field in ("createdAt", "lastEditedAt"):
+            timestamp = _as_optional_str(comment.get(field))
+            if timestamp is not None:
+                timestamps.append(_parse_datetime(timestamp))
     return timestamps
+
+
+def _collect_review_comment_edit_timestamps(threads_for_review: list[dict[str, object]]) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    for thread in threads_for_review:
+        for raw_comment in _as_list(thread.get("comments")):
+            comment = _as_dict(raw_comment, context="review comment edit timestamp")
+            last_edited_at = _as_optional_str(comment.get("lastEditedAt"))
+            if last_edited_at is not None:
+                timestamps.append(_parse_datetime(last_edited_at))
+    return tuple(timestamps)
 
 
 def _count_thread_comments_in_timeline_window(
@@ -3430,8 +3467,26 @@ def _count_thread_comments_in_timeline_window(
         return 0
     return sum(
         1
-        for timestamp in _collect_thread_comment_timestamps(comments)
-        if _timestamp_matches_timeline_window(timestamp, timeline_window)
+        for raw_comment in comments
+        if _thread_comment_matches_timeline_window(
+            _as_dict(raw_comment, context="review comment timestamp"), timeline_window
+        )
+    )
+
+
+def _thread_comment_matches_timeline_window(comment: dict[str, object], timeline_window: TimelineWindow | None) -> bool:
+    created_at = _as_optional_str(comment.get("createdAt"))
+    return (
+        created_at is not None and _timestamp_matches_timeline_window(_parse_datetime(created_at), timeline_window)
+    ) or _comment_edit_matches_timeline_window(comment, timeline_window)
+
+
+def _comment_edit_matches_timeline_window(comment: dict[str, object], timeline_window: TimelineWindow | None) -> bool:
+    if timeline_window is None or timeline_window.after is None:
+        return False
+    last_edited_at = _as_optional_str(comment.get("lastEditedAt"))
+    return last_edited_at is not None and _timestamp_matches_timeline_window(
+        _parse_datetime(last_edited_at), timeline_window
     )
 
 
@@ -3443,21 +3498,6 @@ def _timestamp_matches_timeline_window(timestamp: datetime, timeline_window: Tim
     if timeline_window.before is not None and timestamp >= timeline_window.before:
         return False
     return True
-
-
-def _format_timeline_window_comment_marker(
-    timestamp: datetime | None,
-    timeline_window: TimelineWindow | None,
-) -> str:
-    if timestamp is None or timeline_window is None or not timeline_window.active:
-        return ""
-    if _timestamp_matches_timeline_window(timestamp, timeline_window):
-        return " [within selected window]"
-    if timeline_window.after is not None and timestamp <= timeline_window.after:
-        return " [before selected window]"
-    if timeline_window.before is not None and timestamp >= timeline_window.before:
-        return " [after selected window]"
-    return ""
 
 
 def _format_minimized_reason(value: object) -> str:
@@ -3495,8 +3535,12 @@ def _render_review_comment_block(
         rendered_body, details_collapsed_count = _collapse_details_blocks(rendered_body)
 
     outdated_badge = " [outdated]" if (bool(comment.get("outdated")) or bool(comment.get("isOutdated"))) else ""
-    window_marker = _format_timeline_window_comment_marker(created_at_value, timeline_window)
+    window_marker = format_timeline_window_marker(created_at_value, timeline_window)
     lines = [f"- [{index}]{outdated_badge} {path}{line} by @{author} at {created_at}{window_marker}"]
+    last_edited_at = _as_optional_str(comment.get("lastEditedAt"))
+    if last_edited_at:
+        edited_window_marker = format_timeline_window_marker(_parse_datetime(last_edited_at), timeline_window)
+        lines.append(f"  Edited: {last_edited_at}{edited_window_marker}")
     if rendered_body:
         lines.append("  Comment:")
         lines.extend(_indented_tag_block("comment", rendered_body, indent="  "))

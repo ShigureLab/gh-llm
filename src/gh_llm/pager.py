@@ -460,13 +460,8 @@ class TimelinePager:
             collected.extend(_matching_items(current_page, timeline_window))
             if not current_page.page_info.has_previous_page:
                 break
-            if (
-                meta.kind != "pr"
-                and current_page.items
-                and timeline_window.after is not None
-                and current_page.items[0].timestamp <= timeline_window.after
-            ):
-                break
+            # An older comment may have been edited inside the selected window.
+            # Creation-time ordering cannot bound an incremental edit scan.
 
             before_cursor = current_page.page_info.start_cursor
             if before_cursor is None:
@@ -719,6 +714,8 @@ def _event_matches_window(event: TimelineEvent, timeline_window: TimelineWindow)
         return False
     if event.timestamp > timeline_window.after:
         return False
+    if event.last_edited_at is not None and _matches_window(event.last_edited_at, timeline_window):
+        return True
     return any(_matches_window(timestamp, timeline_window) for timestamp in event.related_timestamps)
 
 

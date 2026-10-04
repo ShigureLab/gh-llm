@@ -169,7 +169,9 @@ gh-llm issue view 77924 --repo PaddlePaddle/Paddle --expand minimized,details
 gh-llm issue view 77924 --repo PaddlePaddle/Paddle --show meta,description
 ```
 
-For incremental follow-ups, copy the previous output's `fetched_at` value into `--after <fetched_at>`. `--before` is also available when you want to inspect only older timeline slices.
+For incremental follow-ups, copy the previous output's `fetched_at` value into `--after <fetched_at>`. This includes older comments and reviews whose latest body edit falls in the selected window. Edited items show their current body and last edit time; affected review threads retain their conversation context. Original event timestamps and ordering stay unchanged.
+
+Use `--before` with `--after` to bound that window. On its own, `--before` selects older timeline events by their original timestamps. These views show current content, not historical versions of edited text.
 
 When `--show` does not include `timeline` (for example `--show meta`, `--show summary`, or `--show actions`), both `pr view` and `issue view` stay on the lightweight metadata path and skip timeline bootstrap.
 

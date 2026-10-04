@@ -33,7 +33,7 @@ def add_body_input_arguments(
 def add_timeline_window_arguments(parser: Any) -> None:
     parser.add_argument(
         "--after",
-        help="only include timeline events strictly after this ISO 8601 / RFC3339 timestamp",
+        help="include timeline events and comment edits strictly after this ISO 8601 / RFC3339 timestamp",
     )
     parser.add_argument(
         "--before",
@@ -84,6 +84,16 @@ def format_timestamp_utc(value: datetime) -> str:
     utc_value = value.astimezone(UTC)
     timespec = "microseconds" if utc_value.microsecond else "seconds"
     return utc_value.isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def format_timeline_window_marker(timestamp: datetime | None, timeline_window: TimelineWindow | None) -> str:
+    if timestamp is None or timeline_window is None or not timeline_window.active:
+        return ""
+    if timeline_window.after is not None and timestamp <= timeline_window.after:
+        return " [before selected window]"
+    if timeline_window.before is not None and timestamp >= timeline_window.before:
+        return " [after selected window]"
+    return " [within selected window]"
 
 
 def current_timestamp_utc() -> str:

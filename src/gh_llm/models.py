@@ -167,6 +167,8 @@ class TimelineEvent:
     reactions_summary: str | None = None
     details_collapsed_count: int = 0
     auto_collapse_kind: str | None = None
+    last_edited_at: datetime | None = None
+    thread_comment_edit_timestamps: tuple[datetime, ...] = ()
 
 
 @dataclass(frozen=True)
