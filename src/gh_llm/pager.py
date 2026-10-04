@@ -102,6 +102,7 @@ class TimelinePager:
         review_threads_window: int | None = 10,
         diff_hunk_lines: int | None = None,
         auto_collapse_authors: tuple[str, ...] = (),
+        include_last_page: bool = True,
     ) -> tuple[TimelineContext, TimelinePage, TimelinePage | None]:
         _validate_page_size(page_size)
         window = TimelineWindow() if timeline_window is None else timeline_window
@@ -155,7 +156,7 @@ class TimelinePager:
         )
         self._remember_forward(context, page=1, cursor_used=None, page_result=first_page)
 
-        if total_pages == 1:
+        if total_pages == 1 or not include_last_page:
             return context, first_page, None
 
         last_page_size = _page_size_for_page(
@@ -183,6 +184,53 @@ class TimelinePager:
         )
         self._remember_backward(context, page=total_pages, cursor_used=None, page_result=last_page)
         return context, first_page, last_page
+
+    def build_page(
+        self,
+        meta: PullRequestMeta,
+        page_size: int,
+        page: int,
+        *,
+        timeline_window: TimelineWindow | None = None,
+        show_resolved_details: bool = False,
+        show_outdated_details: bool = False,
+        show_minimized_details: bool = False,
+        show_details_blocks: bool = False,
+        review_threads_window: int | None = 10,
+        diff_hunk_lines: int | None = None,
+        auto_collapse_authors: tuple[str, ...] = (),
+    ) -> tuple[TimelineContext, TimelinePage]:
+        context, first_page, _ = self.build_initial(
+            meta,
+            page_size=page_size,
+            timeline_window=timeline_window,
+            show_resolved_details=show_resolved_details,
+            show_outdated_details=show_outdated_details,
+            show_minimized_details=show_minimized_details,
+            show_details_blocks=show_details_blocks,
+            review_threads_window=review_threads_window,
+            diff_hunk_lines=diff_hunk_lines,
+            auto_collapse_authors=auto_collapse_authors,
+            include_last_page=False,
+        )
+        _validate_page(page, context.total_pages)
+        # These pages were built with the same rendering options in this call.
+        if context.timeline_filtered:
+            return context, context.filtered_pages[page]
+        if page == 1:
+            return context, first_page
+        result = self.fetch_page(
+            meta,
+            context,
+            page,
+            show_resolved_details=show_resolved_details,
+            show_outdated_details=show_outdated_details,
+            show_minimized_details=show_minimized_details,
+            show_details_blocks=show_details_blocks,
+            review_threads_window=review_threads_window,
+            diff_hunk_lines=diff_hunk_lines,
+        )
+        return context, result
 
     def fetch_page(
         self,

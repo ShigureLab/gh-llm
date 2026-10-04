@@ -769,6 +769,63 @@ def test_view_and_expand_use_real_cursor_pagination(
     assert "END_MARKER" in out
 
 
+def test_timeline_expand_loads_only_pages_on_the_target_path(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases = [
+        ("pr", "77928", 1, 4, "commit 1", [("forward", 2, None)]),
+        ("pr", "77928", 2, 4, "commit 2", [("forward", 2, None), ("forward", 2, "cursor-1")]),
+        (
+            "pr",
+            "77928",
+            3,
+            4,
+            "(review hidden: outdated)",
+            [("forward", 2, None), ("backward", 1, None), ("backward", 2, "back-3")],
+        ),
+        ("pr", "77928", 4, 4, "self comment", [("forward", 2, None), ("backward", 1, None)]),
+        ("issue", "77924", 1, 3, "cross-reference by @alice", [("forward", 2, None)]),
+        ("issue", "77924", 2, 3, "self issue comment", [("forward", 2, None), ("forward", 2, "cursor-1")]),
+        ("issue", "77924", 3, 3, "issue/marked-as-duplicate", [("forward", 2, None), ("backward", 1, None)]),
+    ]
+    for kind, number, page, total_pages, expected_text, expected_reads in cases:
+        responder = GhResponder()
+        monkeypatch.setattr(github_api.subprocess, "run", responder.run)
+        code = cli.run(
+            [
+                kind,
+                "timeline-expand",
+                str(page),
+                f"--{kind}",
+                number,
+                "--repo",
+                "PaddlePaddle/Paddle",
+                "--page-size",
+                "2",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert f"### Page {page}/{total_pages}" in out
+        assert out.count("### Page ") == 1
+        assert expected_text in out
+        timeline_calls = [
+            call
+            for call in responder.calls
+            if call[:3] == ["gh", "api", "graphql"] and "timelineItems(" in _extract_form(call, "query")
+        ]
+        actual_reads = [
+            (
+                "forward" if "timelineItems(first:" in _extract_form(call, "query") else "backward",
+                _extract_field_int(call, "pageSize"),
+                _extract_field(call, "after") or _extract_field(call, "before"),
+            )
+            for call in timeline_calls
+        ]
+        assert actual_reads == expected_reads
+
+
 def test_pr_view_without_auto_collapse_keeps_default_timeline_output(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1359,7 +1416,8 @@ def test_pr_timeline_expand_with_after_uses_filtered_page_numbers(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
 
     code = cli.run(
         [
@@ -1384,13 +1442,21 @@ def test_pr_timeline_expand_with_after_uses_filtered_page_numbers(
     assert "7. [2026-02-14 15:11 UTC] comment by @ShigureNyako" in out
     assert "review/APPROVED by @reviewer" not in out
     assert "comment-edit c3 --body '<comment_body>' --pr 77928 --repo PaddlePaddle/Paddle" in out
+    timeline_calls = [
+        call
+        for call in responder.calls
+        if call[:3] == ["gh", "api", "graphql"] and "timelineItems(" in _extract_form(call, "query")
+    ]
+    assert all("timelineItems(last:" in _extract_form(call, "query") for call in timeline_calls)
+    assert [_extract_field(call, "before") for call in timeline_calls] == [None, "back-3", "back-2", "back-1"]
 
 
 def test_pr_timeline_expand_with_after_and_expand_option(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
 
     code = cli.run(
         [
@@ -1420,6 +1486,12 @@ def test_pr_timeline_expand_with_after_and_expand_option(
     assert "(review hidden: outdated)" not in out
     assert "resolved review comments are collapsed" not in out
     assert "hidden review comments are collapsed" not in out
+    timeline_calls = [
+        call
+        for call in responder.calls
+        if call[:3] == ["gh", "api", "graphql"] and "timelineItems(" in _extract_form(call, "query")
+    ]
+    assert len(timeline_calls) == 4
 
 
 def test_invalid_timeline_window_range_reports_error(
@@ -4418,7 +4490,8 @@ def test_issue_timeline_expand_with_expand_minimized(
 def test_issue_timeline_expand_with_before_and_expand_minimized(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(github_api.subprocess, "run", GhResponder().run)
+    responder = GhResponder()
+    monkeypatch.setattr(github_api.subprocess, "run", responder.run)
 
     code = cli.run(
         [
@@ -4443,6 +4516,13 @@ def test_issue_timeline_expand_with_before_and_expand_minimized(
     assert "### Page 1/2" in out
     assert "(comment hidden: outdated)" not in out
     assert "cross-reference by @alice (Alice)" in out
+    timeline_calls = [
+        call
+        for call in responder.calls
+        if call[:3] == ["gh", "api", "graphql"] and "timelineItems(" in _extract_form(call, "query")
+    ]
+    assert all("timelineItems(first:" in _extract_form(call, "query") for call in timeline_calls)
+    assert [_extract_field(call, "after") for call in timeline_calls] == [None, "cursor-1"]
 
 
 def test_issue_details_expand_with_before_uses_filtered_expanded_page(
