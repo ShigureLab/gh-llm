@@ -884,6 +884,9 @@ def cmd_pr_review_start(args: Any) -> int:
     )
     print(f"Comment template: `{comment_template_cmd}`")
     print(f"Multi-line template: `{range_template_cmd}`")
+    if total_hunks_on_page > 0:
+        print("Use the L#### / R#### labels from the numbered diff below as --line values.")
+        print("For a continuous multi-line range on the same side, add --start-line <start_line>.")
     print()
 
     if not diff_page.files:
@@ -977,8 +980,6 @@ def cmd_pr_review_start(args: Any) -> int:
             print(f"RIGHT commentable span(s): {right_span_preview}")
             extra_context = extra_contexts[hunk_index - 1]
             inline_thread_blocks = inline_thread_blocks_by_hunk[hunk_index - 1]
-            print("Use the L#### / R#### labels from the numbered diff below as --line values.")
-            print("For a continuous multi-line range on the same side, add --start-line <start_line>.")
             print("```text")
             for line in _render_numbered_hunk_lines(
                 hunk,
