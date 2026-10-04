@@ -210,21 +210,17 @@ def cmd_issue_timeline_expand(args: Any) -> int:
     client = GitHubClient()
     pager = TimelinePager(client)
     expand = _parse_expand_options(raw_values=list(getattr(args, "expand", [])))
-    context, meta = _resolve_context_and_meta(
-        client=client,
-        pager=pager,
-        args=args,
+    timeline_window = _resolve_timeline_window(args)
+    page_size = getattr(args, "page_size", None)
+    meta = _resolve_issue_meta(client=client, args=args)
+    context, page = pager.build_page(
+        meta=meta,
+        page_size=DEFAULT_PAGE_SIZE if page_size is None else int(page_size),
+        page=int(args.page),
+        timeline_window=timeline_window,
         show_minimized_details=expand.minimized,
         show_details_blocks=expand.details,
         auto_collapse_authors=_resolve_auto_collapse_authors(args),
-    )
-
-    page = pager.fetch_page(
-        meta=meta,
-        context=context,
-        page=int(args.page),
-        show_minimized_details=expand.minimized,
-        show_details_blocks=expand.details,
     )
 
     for line in render_header(context):
