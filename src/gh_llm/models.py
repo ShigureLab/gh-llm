@@ -334,9 +334,9 @@ class TimelineContext:
     conflict_files: tuple[str, ...] = ()
     stack: PullRequestStack | None = None
     stack_supported: bool = True
-    forward_after_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
-    backward_before_by_page: dict[int, str | None] = field(default_factory=lambda: cast("dict[int, str | None]", {}))
-    filtered_pages: dict[int, TimelinePage] = field(default_factory=lambda: cast("dict[int, TimelinePage]", {}))
+    forward_after_by_page: dict[int, str | None] = field(default_factory=dict)
+    backward_before_by_page: dict[int, str | None] = field(default_factory=dict)
+    filtered_pages: dict[int, TimelinePage] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
